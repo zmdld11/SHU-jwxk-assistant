@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}上大选课监控{% endblock %}</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --sidebar-width: 250px;
+            --sidebar-bg: #1a1d29;
+            --sidebar-hover: #2a2d3a;
+            --sidebar-active: #3b82f6;
+            --content-bg: #f5f7fa;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+            background: var(--content-bg);
+            min-height: 100vh;
+        }
+        /* Sidebar */
+        .sidebar {
+            position: fixed; left: 0; top: 0; bottom: 0; width: var(--sidebar-width);
+            background: var(--sidebar-bg); z-index: 1000;
+            display: flex; flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+        .sidebar-brand {
+            padding: 20px; color: #fff; font-size: 18px; font-weight: 700;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .sidebar-brand i { color: #3b82f6; margin-right: 10px; }
+        .sidebar-brand small { display: block; font-size: 11px; font-weight: 400; color: #888; margin-top: 4px; }
+        .sidebar-nav { flex: 1; padding: 12px 0; overflow-y: auto; }
+        .sidebar-nav .nav-item {
+            display: flex; align-items: center; padding: 12px 20px;
+            color: #aaa; text-decoration: none; transition: all 0.2s;
+            border-left: 3px solid transparent; cursor: pointer;
+        }
+        .sidebar-nav .nav-item:hover { background: var(--sidebar-hover); color: #fff; }
+        .sidebar-nav .nav-item.active { background: var(--sidebar-hover); color: #fff; border-left-color: var(--sidebar-active); }
+        .sidebar-nav .nav-item i { width: 22px; margin-right: 10px; font-size: 16px; }
+        .sidebar-footer {
+            padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.08);
+            color: #888; font-size: 11px;
+        }
+        /* Main content */
+        .main-content {
+            margin-left: var(--sidebar-width); min-height: 100vh;
+            padding: 0; transition: margin-left 0.3s ease;
+        }
+        .page-header {
+            background: #fff; padding: 20px 30px; border-bottom: 1px solid #e8ecf1;
+        }
+        .page-header h1 { font-size: 22px; font-weight: 600; color: #1a1d29; }
+        .page-header p { color: #888; font-size: 14px; margin: 4px 0 0; }
+        .page-body { padding: 24px 30px; }
+        /* Cards */
+        .stat-card {
+            background: #fff; border-radius: 12px; padding: 20px;
+            border: 1px solid #e8ecf1; transition: box-shadow 0.2s;
+        }
+        .stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .stat-card .stat-icon {
+            width: 48px; height: 48px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px; margin-bottom: 12px;
+        }
+        .stat-card .stat-value { font-size: 28px; font-weight: 700; color: #1a1d29; }
+        .stat-card .stat-label { font-size: 13px; color: #888; margin-top: 4px; }
+        /* Tables */
+        .table-course { font-size: 14px; }
+        .table-course th { border-top: none; color: #888; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .table-course td { vertical-align: middle; }
+        /* Badges */
+        .badge-available { background: #dcfce7; color: #166534; }
+        .badge-full { background: #fef2f2; color: #991b1b; }
+        .badge-notified { background: #dbeafe; color: #1e40af; }
+        .badge-pending { background: #fef9c3; color: #854d0e; }
+        /* Status dot */
+        .status-dot {
+            display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px;
+        }
+        .status-dot.running { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.4); }
+        .status-dot.stopped { background: #ef4444; }
+        .status-dot.pending { background: #f59e0b; }
+        /* Course table in schedule */
+        .schedule-grid {
+            display: grid; grid-template-columns: 70px repeat(5, 1fr);
+            gap: 2px; font-size: 13px;
+        }
+        .schedule-header { background: #1a1d29; color: #fff; padding: 10px; text-align: center; font-weight: 600; border-radius: 4px; }
+        .schedule-time { background: #f0f2f5; padding: 10px; text-align: center; font-weight: 500; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+        .schedule-cell { background: #fff; padding: 4px; min-height: 50px; border-radius: 4px; border: 1px solid #e8ecf1; }
+        .schedule-cell .course-item {
+            background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 3px;
+            font-size: 11px; margin-bottom: 2px; cursor: default;
+        }
+        .schedule-cell .course-item.conflict { background: #fef2f2; color: #991b1b; }
+        /* Alerts */
+        .alert-conflict {
+            background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+            border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
+        }
+        /* Forms */
+        .form-control, .form-select {
+            border-radius: 8px; border-color: #e0e4ea;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        }
+        .btn { border-radius: 8px; font-weight: 500; padding: 8px 20px; }
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.show { transform: translateX(0); }
+            .main-content { margin-left: 0; }
+            .page-body { padding: 16px; }
+        }
+        /* Toast */
+        .toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; }
+        /* Misc */
+        .text-muted-small { color: #aaa; font-size: 12px; }
+        .empty-state { text-align: center; padding: 60px 20px; color: #aaa; }
+        .empty-state i { font-size: 48px; margin-bottom: 16px; }
+        .section-card {
+            background: #fff; border-radius: 12px; border: 1px solid #e8ecf1;
+            padding: 24px; margin-bottom: 20px;
+        }
+        .section-card h5 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #1a1d29; }
+        .monitor-badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+        <i class="fas fa-graduation-cap"></i>选课监控
+        <small>上海大学 · 课程助手</small>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">
+            <i class="fas fa-chart-pie"></i> 监控面板
+        </a>
+        <a href="/monitor" class="nav-item {% if request.path == '/monitor' %}active{% endif %}">
+            <i class="fas fa-eye"></i> 课程监控
+        </a>
+        <a href="/grab" class="nav-item {% if request.path == '/grab' %}active{% endif %}">
+            <i class="fas fa-crosshairs"></i> 定时抢课
+        </a>
+        <a href="/schedule" class="nav-item {% if request.path == '/schedule' %}active{% endif %}">
+            <i class="fas fa-calendar-alt"></i> 我的课表
+        </a>
+        <a href="/settings" class="nav-item {% if request.path == '/settings' %}active{% endif %}">
+            <i class="fas fa-cog"></i> 系统设置
+        </a>
+    </nav>
+    <div class="sidebar-footer">
+        <div id="sidebar-status">
+            <span class="status-dot stopped"></span>
+            <span>检查配置中...</span>
+        </div>
+    </div>
+</div>
+
+<!-- Main Content -->
+<div class="main-content" id="main-content">
+    {% block content %}{% endblock %}
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- Scripts -->
+<script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js" defer></script>
+<script>
+// Toast notification
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toastContainer');
+    const icons = { success: 'fa-check-circle', danger: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-bg-${type} border-0 show`;
+    toast.role = 'alert';
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body"><i class="fas ${icons[type] || icons.info} me-2"></i>${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>`;
+    container.appendChild(toast);
+    setTimeout(() => { toast.remove(); }, 4000);
+}
+
+// Sidebar status
+function updateSidebarStatus() {
+    fetch('/api/monitor/status')
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById('sidebar-status');
+            if (data.running) {
+                el.innerHTML = '<span class="status-dot running"></span><span style="color:#22c55e">监控运行中</span>';
+            } else {
+                el.innerHTML = '<span class="status-dot stopped"></span><span style="color:#ef4444">监控已停止</span>';
+            }
+        })
+        .catch(() => {});
+}
+updateSidebarStatus();
+setInterval(updateSidebarStatus, 5000);
+
+// Format datetime
+function formatTime(d) {
+    const date = new Date(d);
+    return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+// Handle fetch errors
+async function apiFetch(url, options = {}) {
+    try {
+        const resp = await fetch(url, options);
+        return await resp.json();
+    } catch (e) {
+        showToast('网络请求失败: ' + e.message, 'danger');
+        return null;
+    }
+}
+
+// Toggle sidebar on mobile
+document.addEventListener('DOMContentLoaded', function() {
+    // Add mobile toggle button
+    const header = document.querySelector('.page-header');
+    if (header) {
+        const toggle = document.createElement('button');
+        toggle.className = 'btn btn-sm d-md-none me-2';
+        toggle.innerHTML = '<i class="fas fa-bars"></i>';
+        toggle.onclick = () => document.getElementById('sidebar').classList.toggle('show');
+        header.querySelector('h1')?.before(toggle);
+    }
+});
+</script>
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

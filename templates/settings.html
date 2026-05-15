@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block title %}系统设置 - 上大选课监控{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1><i class="fas fa-cog me-2 text-secondary"></i>系统设置</h1>
+    <p>配置管理、参数查找指南、Cookie 自动更新工具</p>
+</div>
+<div class="page-body">
+    <div class="row">
+        <div class="col-md-6">
+            <!-- Current Config Status -->
+            <div class="section-card">
+                <h5><i class="fas fa-info-circle me-2 text-primary"></i>当前配置</h5>
+                <div id="configDetail" class="mb-0">
+                    <p class="text-muted-small"><i class="fas fa-spinner fa-spin"></i> 加载中...</p>
+                </div>
+            </div>
+
+            <!-- Update Semester / Params -->
+            <div class="section-card">
+                <h5><i class="fas fa-sliders-h me-2 text-primary"></i>修改配置参数</h5>
+                <p class="text-muted-small">学期参数不正确会导致查不到课程</p>
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label">学年 (XKXNM)</label>
+                        <input type="text" class="form-control" id="cfg_xkxnm" placeholder="如 2025">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">学期 (XKXQM)</label>
+                        <input type="text" class="form-control" id="cfg_xkxqm" placeholder="12=秋季, 16=春季">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">xkkz_id</label>
+                        <input type="text" class="form-control" id="cfg_xkkz" placeholder="选课控制ID">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label">检查间隔(秒)</label>
+                        <input type="number" class="form-control" id="cfg_interval" placeholder="30">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="updateConfig()"><i class="fas fa-save me-1"></i>保存修改</button>
+            </div>
+
+            <!-- Manual Cookie Update -->
+            <div class="section-card">
+                <h5><i class="fas fa-key me-2 text-warning"></i>手动更新 Cookies</h5>
+                <p class="text-muted-small">直接从浏览器粘贴 Cookies（登录教务系统后，F12 → 任意请求 → 复制 Cookie 请求头）</p>
+                <div class="mb-2">
+                    <textarea class="form-control" id="cookieInput" rows="3" placeholder="在此粘贴完整的 Cookie 字符串&#10;如: JSESSIONID=xxx; route=xxx"></textarea>
+                </div>
+                <button class="btn btn-warning" onclick="updateCookies()"><i class="fas fa-upload me-1"></i>更新 Cookies</button>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <!-- Bookmarklet Tool -->
+            <div class="section-card">
+                <h5><i class="fas fa-magic me-2 text-success"></i>一键获取 Cookies 工具 ⭐</h5>
+                <p class="text-muted-small">把下面的按钮拖到浏览器书签栏，登录教务系统后点击即可自动把 Cookies 传给本系统</p>
+
+                <div class="alert alert-info py-3">
+                    <div class="mb-2"><strong>使用步骤：</strong></div>
+                    <ol style="font-size:13px; margin-bottom:0;">
+                        <li>确保本系统已启动（http://127.0.0.1:5000）</li>
+                        <li>把下面的链接拖到浏览器书签栏</li>
+                        <li>用浏览器打开教务系统并登录</li>
+                        <li>点击刚才添加的书签 → 自动完成！</li>
+                    </ol>
+                </div>
+
+                <a id="bookmarklet" href="javascript:void(0)"
+                   class="btn btn-success btn-lg d-block text-center py-3"
+                   style="font-size:16px; border-radius:12px;"
+                   onclick="alert('请将此按钮拖到浏览器书签栏使用，不要直接点击');">
+                    <i class="fas fa-cookie-bite me-2"></i> 🍪 获取 Cookies
+                </a>
+                <p class="text-muted-small mt-2">拖到书签栏后，在教务系统页面点击此书签</p>
+
+                <script>
+                // Generate the bookmarklet URL with improved error handling
+                function generateBookmarklet() {
+                    const code = `javascript:(function(){
+  var url='http://127.0.0.1:5000/api/update_cookies';
+  fetch(url,{
+    method:'POST',
+    mode:'cors',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cookies:document.cookie})
+  })
+  .then(function(r){return r.json()})
+  .then(function(d){
+    alert('[OK] Cookies updated!\\n' + d.message);
+    if(d.success) window.open('http://127.0.0.1:5000/settings','_blank');
+  })
+  .catch(function(e){
+    alert('[Failed] ' + e.message + '\\n\\nMake sure the monitor is running at http://127.0.0.1:5000');
+  });
+})();`;
+                    const el = document.getElementById('bookmarklet');
+                    el.href = code;
+                }
+                generateBookmarklet();
+                </script>
+            </div>
+
+            <!-- F12 Parameter Guide -->
+            <div class="section-card">
+                <h5><i class="fas fa-search me-2 text-danger"></i>F12 参数查找指南</h5>
+                <p class="text-muted-small">学校系统更新后，按以下步骤查找所有需要的参数</p>
+
+                <div class="accordion" id="guideAccordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#guideStep1">
+                                ① 查找 Cookies
+                            </button>
+                        </h2>
+                        <div id="guideStep1" class="accordion-collapse collapse show" data-bs-parent="#guideAccordion">
+                            <div class="accordion-body" style="font-size:13px;">
+                                <ol>
+                                    <li>浏览器打开 <code>jwxt.shu.edu.cn</code> 并登录</li>
+                                    <li>按 <kbd>F12</kbd> → <strong>Network（网络）</strong> 标签</li>
+                                    <li>刷新页面，点击第一条请求</li>
+                                    <li>在 <strong>Request Headers</strong> 里找到 <code>Cookie:</code></li>
+                                    <li>复制其中 <code>JSESSIONID=xxx</code> 和 <code>route=xxx</code> 的值</li>
+                                </ol>
+                                <p class="mb-0 text-muted">或者用上面的「一键获取 Cookies」书签工具更方便</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#guideStep2">
+                                ② 查找学期参数 (xkxnm / xkxqm)
+                            </button>
+                        </h2>
+                        <div id="guideStep2" class="accordion-collapse collapse" data-bs-parent="#guideAccordion">
+                            <div class="accordion-body" style="font-size:13px;">
+                                <ol>
+                                    <li>登录教务系统，进入选课页面</li>
+                                    <li>按 <kbd>F12</kbd> → <strong>Network（网络）</strong></li>
+                                    <li>在搜索框输入任一课程号，点查询</li>
+                                    <li>找到请求名为 <code>cxJxbWithKchZzxkYzb</code> 的 POST 请求</li>
+                                    <li>在 <strong>Request Payload / Form Data</strong> 里找：
+                                        <ul>
+                                            <li><code>xkxnm</code> — 学年（如 2025 = 2025-2026学年）</li>
+                                            <li><code>xkxqm</code> — 学期码</li>
+                                        </ul>
+                                    </li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#guideStep3">
+                                ③ 查找 xkkz_id 等其他参数
+                            </button>
+                        </h2>
+                        <div id="guideStep3" class="accordion-collapse collapse" data-bs-parent="#guideAccordion">
+                            <div class="accordion-body" style="font-size:13px;">
+                                <p><strong>xkkz_id（选课控制ID）</strong> 是最关键的参数之一，每个选课轮次都会变化。</p>
+                                <ol>
+                                    <li>在查询课程的 POST 请求的 Form Data 里查找 <code>xkkz_id</code></li>
+                                    <li>复制它的值，在本页「修改配置参数」中更新</li>
+                                </ol>
+                                <p class="mb-0 mt-2"><strong>其他常用参数</strong> 同样在 Form Data 里：</p>
+                                <ul>
+                                    <li><code>jg_id</code> — 学院ID</li>
+                                    <li><code>zyh_id</code> — 专业ID</li>
+                                    <li><code>bh_id</code> — 班级ID</li>
+                                    <li><code>njdm_id</code> — 年级代码</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#guideStep4">
+                                ④ 查找课程的教学班ID (jxb_id)
+                            </button>
+                        </h2>
+                        <div id="guideStep4" class="accordion-collapse collapse" data-bs-parent="#guideAccordion">
+                            <div class="accordion-body" style="font-size:13px;">
+                                <ol>
+                                    <li>在查询课程的POST请求的 <strong>Response</strong> 标签里查看返回数据</li>
+                                    <li>每个教学班有一个 <code>jxb_id</code> 字段</li>
+                                    <li>抢课功能需要用到这个ID</li>
+                                    <li>你也可以直接在本系统的「课程监控」页面查课程，会显示 jxb_id</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Load current config
+function loadConfigDetail() {
+    apiFetch('/api/config').then(data => {
+        if (!data) return;
+        const el = document.getElementById('configDetail');
+        const cookieStatus = data.has_jsessionid && data.has_route
+            ? '<span class="text-success"><i class="fas fa-check-circle"></i> 有效</span>'
+            : '<span class="text-danger"><i class="fas fa-times-circle"></i> 未配置</span>';
+        el.innerHTML = `
+            <div class="row g-2" style="font-size:13px;">
+                <div class="col-6"><span class="text-muted">教务系统:</span> ${data.base_url || '--'}</div>
+                <div class="col-6"><span class="text-muted">Cookies:</span> ${cookieStatus}</div>
+                <div class="col-6"><span class="text-muted">学年/学期:</span> ${data.xkxnm || '?'} / ${data.xkxqm || '?'}</div>
+                <div class="col-6"><span class="text-muted">班级容量:</span> ${data.class_capacity} 人</div>
+                <div class="col-6"><span class="text-muted">检查间隔:</span> ${data.check_interval} 秒</div>
+            </div>`;
+        // Fill form fields
+        document.getElementById('cfg_xkxnm').value = data.xkxnm || '';
+        document.getElementById('cfg_xkxqm').value = data.xkxqm || '';
+        document.getElementById('cfg_interval').value = data.check_interval || 30;
+    });
+}
+
+// Update config via API
+function updateConfig() {
+    const body = {
+        xkxnm: document.getElementById('cfg_xkxnm').value.trim(),
+        xkxqm: document.getElementById('cfg_xkxqm').value.trim(),
+        check_interval: parseInt(document.getElementById('cfg_interval').value) || 30,
+    };
+    apiFetch('/api/config/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    }).then(data => {
+        if (data && data.success) {
+            showToast(data.message, 'success');
+            loadConfigDetail();
+        } else if (data) {
+            showToast(data.message, 'danger');
+        }
+    });
+}
+
+// Manual cookie update
+function updateCookies() {
+    const cookieStr = document.getElementById('cookieInput').value.trim();
+    if (!cookieStr) { showToast('请粘贴 Cookie 字符串', 'warning'); return; }
+    apiFetch('/api/update_cookies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookies: cookieStr }),
+    }).then(data => {
+        if (data && data.success) {
+            showToast(data.message, 'success');
+            document.getElementById('cookieInput').value = '';
+            loadConfigDetail();
+        } else if (data) {
+            showToast(data.message, 'danger');
+        }
+    });
+}
+
+loadConfigDetail();
+</script>
+{% endblock %}

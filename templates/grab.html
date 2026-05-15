@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}定时抢课 - 上大选课监控{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1><i class="fas fa-crosshairs me-2 text-danger"></i>定时抢课</h1>
+    <p>设定时间自动选课（需要提供选课接口信息后方可使用）</p>
+</div>
+<div class="page-body">
+    <div class="row">
+        <div class="col-md-5">
+            <div class="section-card">
+                <h5><i class="fas fa-clock me-2 text-primary"></i>新建抢课任务</h5>
+                <div class="alert alert-info py-2" style="font-size:13px;">
+                    <i class="fas fa-info-circle me-1"></i>
+                    当前为占位版本。进入选课期后，用浏览器F12查看选课请求接口，
+                    我会帮你填充完整实现。
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">教学班ID (jxb_id)</label>
+                    <input type="text" class="form-control" id="grabJxbId" placeholder="从课程查询中获取">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">班级名称</label>
+                    <input type="text" class="form-control" id="grabName" placeholder="如 计算机科学进展-0006">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">目标时间</label>
+                    <input type="datetime-local" class="form-control" id="grabTime">
+                </div>
+                <button class="btn btn-danger" onclick="scheduleGrab()">
+                    <i class="fas fa-bullseye me-1"></i>添加抢课任务
+                </button>
+            </div>
+        </div>
+
+        <div class="col-md-7">
+            <div class="section-card">
+                <h5><i class="fas fa-tasks me-2 text-primary"></i>抢课任务列表</h5>
+                <div id="grabTaskList">
+                    <div class="empty-state">
+                        <i class="fas fa-calendar-plus"></i>
+                        <p>暂无抢课任务</p>
+                        <p class="text-muted-small">在左侧创建新的抢课任务</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function scheduleGrab() {
+    const jxb_id = document.getElementById('grabJxbId').value.trim();
+    const name = document.getElementById('grabName').value.trim() || jxb_id;
+    const timeInput = document.getElementById('grabTime').value;
+
+    if (!jxb_id) { showToast('请输入教学班ID', 'warning'); return; }
+    if (!timeInput) { showToast('请选择目标时间', 'warning'); return; }
+
+    // Convert datetime-local to server format
+    const target_time = timeInput.replace('T', ' ');
+
+    apiFetch('/api/grab/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jxb_id, name, target_time }),
+    }).then(data => {
+        if (data && data.success) {
+            showToast(data.message, 'success');
+            document.getElementById('grabJxbId').value = '';
+            document.getElementById('grabName').value = '';
+            loadGrabTasks();
+        } else if (data) {
+            showToast(data.message, 'danger');
+        }
+    });
+}
+
+function removeGrabTask(taskId) {
+    if (!confirm('确定要移除该抢课任务吗？')) return;
+    apiFetch('/api/grab/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: taskId }),
+    }).then(d => {
+        if (d && d.success) { showToast('任务已移除', 'success'); loadGrabTasks(); }
+    });
+}
+
+function loadGrabTasks() {
+    apiFetch('/api/grab/tasks').then(data => {
+        if (!data) return;
+        const container = document.getElementById('grabTaskList');
+        const tasks = data.tasks || [];
+
+        if (tasks.length === 0) {
+            container.innerHTML = `<div class="empty-state"><i class="fas fa-calendar-plus"></i><p>暂无抢课任务</p><p class="text-muted-small">在左侧创建新的抢课任务</p></div>`;
+            return;
+        }
+
+        let html = `<div class="table-responsive"><table class="table table-course"><thead><tr><th>班级</th><th>目标时间</th><th>状态</th><th>结果</th><th>操作</th></tr></thead><tbody>`;
+        tasks.forEach(t => {
+            const statusMap = {
+                'pending': '<span class="badge badge-pending">等待中</span>',
+                'running': '<span class="badge bg-info text-white">执行中 <i class="fas fa-spinner fa-spin"></i></span>',
+                'success': '<span class="badge badge-available">成功</span>',
+                'failed': '<span class="badge badge-full">失败</span>',
+                'cancelled': '<span class="badge bg-secondary">已取消</span>',
+            };
+            html += `<tr>
+                <td>${t.name || t.jxb_id}</td>
+                <td>${t.target_time}</td>
+                <td>${statusMap[t.status] || t.status}</td>
+                <td><small class="text-muted">${t.result_msg || '--'}</small></td>
+                <td><button class="btn btn-sm btn-outline-danger" onclick="removeGrabTask(${t.id})"><i class="fas fa-trash"></i></button></td>
+            </tr>`;
+        });
+        html += `</tbody></table></div>`;
+        container.innerHTML = html;
+    });
+}
+
+loadGrabTasks();
+setInterval(loadGrabTasks, 3000);
+</script>
+{% endblock %}

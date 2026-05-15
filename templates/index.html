@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}监控面板 - 上大选课监控{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-start">
+        <div>
+            <h1><i class="fas fa-chart-pie me-2 text-primary"></i>监控面板</h1>
+            <p>系统概览与运行状态</p>
+        </div>
+        <div>
+            <button class="btn btn-outline-danger btn-sm me-2" onclick="toggleMonitor(false)" id="btnStop" style="display:none;">
+                <i class="fas fa-stop me-1"></i>停止监控
+            </button>
+            <button class="btn btn-success btn-sm" onclick="toggleMonitor(true)" id="btnStart">
+                <i class="fas fa-play me-1"></i>启动监控
+            </button>
+        </div>
+    </div>
+</div>
+<div class="page-body">
+    <!-- Status Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background:#dbeafe;color:#1e40af;"><i class="fas fa-microchip"></i></div>
+                <div class="stat-value" id="statMonitorStatus">--</div>
+                <div class="stat-label">监控状态</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background:#dcfce7;color:#166534;"><i class="fas fa-book"></i></div>
+                <div class="stat-value" id="statCourseCount">--</div>
+                <div class="stat-label">监控课程数</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background:#fef9c3;color:#854d0e;"><i class="fas fa-users"></i></div>
+                <div class="stat-value" id="statClassCount">--</div>
+                <div class="stat-label">教学班总数</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background:#fef2f2;color:#991b1b;"><i class="fas fa-bell"></i></div>
+                <div class="stat-value" id="statAvailableCount">--</div>
+                <div class="stat-label">有空位班级</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Config Status -->
+    <div class="section-card" id="configCard">
+        <h5><i class="fas fa-shield-alt me-2 text-success"></i>连接状态</h5>
+        <div id="configStatus"><p class="text-muted-small"><i class="fas fa-spinner fa-spin"></i> 加载中...</p></div>
+    </div>
+
+    <!-- Monitored Courses -->
+    <div class="section-card">
+        <h5><i class="fas fa-list me-2 text-primary"></i>当前监控列表</h5>
+        <div id="watchlistContainer">
+            <div class="empty-state">
+                <i class="fas fa-inbox"></i>
+                <p>暂无监控课程</p>
+                <p class="text-muted-small">前往「课程监控」页面添加课程</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function toggleMonitor(start) {
+    const action = start ? 'start' : 'stop';
+    apiFetch(`/api/monitor/${action}`, { method: 'POST' }).then(data => {
+        if (data && data.success) {
+            showToast(data.message, 'success');
+            loadDashboard();
+        } else if (data) {
+            showToast(data.message, 'warning');
+        }
+    });
+}
+
+function loadDashboard() {
+    apiFetch('/api/monitor/status').then(data => {
+        if (!data) return;
+        const running = data.running;
+        document.getElementById('btnStart').style.display = running ? 'none' : '';
+        document.getElementById('btnStop').style.display = running ? '' : 'none';
+        document.getElementById('statMonitorStatus').textContent = running ? '运行中' : '已停止';
+        document.getElementById('statMonitorStatus').style.color = running ? '#22c55e' : '#ef4444';
+
+        const watchlist = data.watchlist || [];
+        document.getElementById('statCourseCount').textContent = watchlist.length;
+
+        let totalClasses = 0, available = 0;
+        watchlist.forEach(w => {
+            totalClasses += (w.classes || []).length;
+            (w.classes || []).forEach(c => { if (c.remaining > 0) available++; });
+        });
+        document.getElementById('statClassCount').textContent = totalClasses;
+        document.getElementById('statAvailableCount').textContent = available;
+
+        // Render watchlist
+        const container = document.getElementById('watchlistContainer');
+        if (watchlist.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>暂无监控课程</p>
+                    <p class="text-muted-small">前往「课程监控」页面添加课程</p>
+                </div>`;
+            return;
+        }
+
+        let html = '<div class="table-responsive"><table class="table table-course"><thead><tr><th>课程/班级</th><th>教师</th><th>时间</th><th>教室</th><th>已选/容量</th><th>状态</th></tr></thead><tbody>';
+        watchlist.forEach(w => {
+            const classes = w.classes || [];
+            if (classes.length === 0) {
+                html += `<tr><td colspan="6" class="text-muted">${w.name} (${w.kch_id || ''}) — 暂无数据</td></tr>`;
+            }
+            classes.forEach(c => {
+                const pct = c.capacity > 0 ? Math.round((c.enrolled / c.capacity) * 100) : 0;
+                const statusBadge = c.remaining > 0
+                    ? `<span class="badge badge-available">有空位 (余${c.remaining})</span>`
+                    : `<span class="badge badge-full">已满 ${pct}%</span>`;
+                const notifiedBadge = c.notified ? `<span class="badge badge-notified ms-1"><i class="fas fa-bell"></i></span>` : '';
+                html += `<tr>
+                    <td><strong>${c.name || w.name}</strong>${notifiedBadge}</td>
+                    <td>${c.teacher || '--'}</td>
+                    <td>${c.time || '--'}</td>
+                    <td>${c.room || '--'}</td>
+                    <td>
+                        <div class="d-flex align-items-center gap-2">
+                            <span>${c.enrolled}/${c.capacity}</span>
+                            <div class="progress flex-grow-1" style="height:6px;max-width:80px;">
+                                <div class="progress-bar ${pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-success'}" style="width:${pct}%"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>${statusBadge}</td>
+                </tr>`;
+            });
+        });
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+    });
+}
+
+function loadConfig() {
+    apiFetch('/api/config').then(data => {
+        if (!data) return;
+        const el = document.getElementById('configStatus');
+        const icon = data.has_jsessionid && data.has_route ? 'fa-check-circle text-success' : 'fa-times-circle text-danger';
+        const semester = `学年 ${data.xkxnm || '?'} / 学期 ${data.xkxqm || '?'}`;
+        const html = `
+            <div class="row g-3">
+                <div class="col-md-4"><small class="text-muted d-block">检查间隔</small><span class="fw-medium">${data.check_interval} 秒</span></div>
+                <div class="col-md-4"><small class="text-muted d-block">当前学期</small><span class="fw-medium">${semester}</span></div>
+                <div class="col-md-4"><small class="text-muted d-block">教务系统</small><span class="fw-medium"><a href="${data.base_url}" target="_blank" class="text-decoration-none">jwxt.shu.edu.cn</a></span></div>
+                <div class="col-12"><small class="text-muted d-block">Cookies</small><span class="fw-medium"><i class="fas ${icon} me-1"></i>${data.has_jsessionid ? 'JSESSIONID ✓' : 'JSESSIONID ✗'} | ${data.has_route ? 'Route ✓' : 'Route ✗'}</span></div>
+            </div>`;
+        el.innerHTML = html;
+    });
+}
+
+loadDashboard();
+loadConfig();
+setInterval(loadDashboard, 5000);
+</script>
+{% endblock %}

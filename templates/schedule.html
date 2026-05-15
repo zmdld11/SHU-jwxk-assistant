@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}我的课表 - 上大选课监控{% endblock %}
+{% block extra_head %}
+<style>
+.sch-grid {
+    display: grid; gap: 1px;
+    grid-template-columns: 44px repeat(5, minmax(0, 1fr));
+    border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden;
+    background: #e2e8f0;
+    transition: opacity 0.3s ease;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+.sch-grid .gh {
+    background: #f8fafc; color: #334155; padding: 12px 4px; text-align: center;
+    font-weight: 700; font-size: 13px; letter-spacing: 0.5px;
+}
+.sch-grid .gp {
+    background: #f8fafc; text-align: center; font-weight: 700; font-size: 14px;
+    color: #64748b; display: flex; align-items: center; justify-content: center;
+}
+.sch-grid .gc {
+    background: #fff; padding: 4px; display: flex; flex-direction: column; gap: 4px;
+    position: relative;
+}
+.sch-grid .gc.empty { background: #fcfcfd; }
+.sch-grid .gc .slot {
+    flex: 1; padding: 8px 6px; border-radius: 8px;
+    font-size: 11px; line-height: 1.4;
+    display: flex; flex-direction: column;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    overflow: hidden;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.sch-grid .gc .slot:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    z-index: 10;
+}
+.sch-grid .gc .slot .sn { font-weight: 700; font-size: 12px; margin-bottom: 3px; letter-spacing: 0.5px; }
+.sch-grid .gc .slot .rm { font-weight: 600; font-size: 11px; opacity: 0.9; margin-bottom: 2px;}
+.sch-grid .gc .slot .ws { font-size: 10px; opacity: 0.8; margin-top: auto; padding-top: 4px;}
+
+/* Split cell: left=前8周, right=后8周 */
+.sch-grid .gc.split { flex-direction: row; padding: 4px; gap: 4px; }
+.sch-grid .gc.split .half {
+    flex: 1; display: flex; flex-direction: column; gap: 4px;
+    min-width: 0;
+}
+.sch-grid .gc.split .half .half-label {
+    font-size: 10px; color: #94a3b8; text-align: center; font-weight: 600;
+    padding: 3px 0; background: #f1f5f9; border-radius: 4px;
+    margin-bottom: 2px;
+}
+
+/* Week filter */
+.week-filter { display:inline-flex; border-radius:8px; overflow:hidden; border:1px solid #d0d5dd; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+.week-filter button {
+    border:none; padding:6px 16px; font-size:13px; font-weight:600; cursor:pointer;
+    background:#fff; color:#64748b; transition: all 0.25s ease;
+}
+.week-filter button:hover { background: #f8fafc; color: #0f172a; }
+.week-filter button.active { background:#3b82f6; color:#fff; }
+.week-filter button:not(:last-child) { border-right:1px solid #d0d5dd; }
+#scheduleGrid { transition: all 0.3s ease; }
+#scheduleGrid.fading { opacity:0.5; transform: scale(0.99); }
+#courseListView { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+#courseListView.fading { opacity: 0; transform: translateX(15px); }
+
+/* Course list */
+.course-list-item {
+    background:#fff; border:1px solid #e2e8f0; border-radius:8px;
+    padding:12px 14px; margin-bottom:8px; border-left:4px solid;
+    transition: all 0.2s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+.course-list-item:hover { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); transform: translateY(-1px); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1><i class="fas fa-calendar-alt me-2 text-primary"></i>我的课表</h1>
+    <p class="text-muted">从教务系统读取当前学期课程安排，支持按周数筛选与跨周并排显示</p>
+</div>
+<div class="page-body">
+    <div class="row">
+        <div class="col-md-9">
+            <div class="section-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="fas fa-table me-2 text-primary"></i>课表视图</h5>
+                    <div class="d-flex gap-2 align-items-center">
+                        <div class="week-filter" id="weekFilter">
+                            <button onclick="switchWeek('all',this)" class="active">全部周</button>
+                            <button onclick="switchWeek('first',this)">前8周</button>
+                            <button onclick="switchWeek('last',this)">后8周</button>
+                        </div>
+                        <button class="btn btn-primary btn-sm ms-2" onclick="loadSchedule()" id="loadBtn">
+                            <i class="fas fa-sync me-1"></i>刷新
+                        </button>
+                    </div>
+                </div>
+                <div id="scheduleGrid"><div class="text-center py-5 text-muted"><i class="fas fa-spinner fa-spin fa-2x mb-3"></i><br>正在加载课表数据...</div></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="section-card">
+                <h5 class="mb-3"><i class="fas fa-book me-2 text-primary"></i>课程列表 (<span id="courseCount">0</span>)</h5>
+                <div id="courseListView"><p class="text-muted small">加载课表后自动生成</p></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+var allCourses=[], currentWeek='all';
+var WEEKDAYS=['周一','周二','周三','周四','周五'];
+
+// High-end pastel + solid colors
+var COURSE_COLORS = [
+    {bg: '#eff6ff', text: '#1e40af', border: '#93c5fd'}, // Blue
+    {bg: '#f0fdf4', text: '#166534', border: '#86efac'}, // Green
+    {bg: '#fef2f2', text: '#991b1b', border: '#fca5a5'}, // Red
+    {bg: '#fffbeb', text: '#92400e', border: '#fde047'}, // Yellow
+    {bg: '#faf5ff', text: '#6b21a8', border: '#d8b4fe'}, // Purple
+    {bg: '#ecfeff', text: '#115e59', border: '#67e8f9'}, // Cyan
+    {bg: '#fff7ed', text: '#9a3412', border: '#fdba74'}, // Orange
+    {bg: '#fdf2f8', text: '#9d174d', border: '#f9a8d4'}, // Pink
+    {bg: '#f8fafc', text: '#334155', border: '#cbd5e1'}, // Slate
+    {bg: '#f0f9ff', text: '#075985', border: '#7dd3fc'}  // Light Blue
+];
+var _colorMap={};
+
+function loadSchedule(){
+    var btn=document.getElementById('loadBtn'); btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> 加载中...';
+    apiFetch('/api/schedule').then(function(d){
+        btn.disabled=false; btn.innerHTML='<i class="fas fa-sync me-1"></i>刷新';
+        if(!d||!d.success){showToast((d&&d.message)||'获取失败','danger');return;}
+        allCourses=d.courses; _colorMap={}; var ci=0;
+        allCourses.forEach(function(c){var k=c.kcmc||c.kch; if(!_colorMap[k])_colorMap[k]=COURSE_COLORS[ci++%COURSE_COLORS.length];});
+        renderAll();
+    });
+}
+function getColor(n){return _colorMap[n]||COURSE_COLORS[0];}
+function sw(w){if(!w)return'';return w.replace('周','').replace('(单)','单').replace('(双)','双');}
+
+function inWeekRange(ws,filter){
+    if(filter==='all')return true;
+    var nums=[],w=ws.replace('周','').replace('(单)','').replace('(双)','').trim();
+    w.split(',').forEach(function(p){p=p.trim();if(p.indexOf('-')>=0){var ab=p.split('-');for(var n=parseInt(ab[0]);n<=parseInt(ab[1]);n++)nums.push(n);}else if(p)nums.push(parseInt(p));});
+    if(ws.indexOf('(单)')>=0||ws.indexOf('(奇)')>=0)nums=nums.filter(function(n){return n%2===1;});
+    if(ws.indexOf('(双)')>=0||ws.indexOf('(偶)')>=0)nums=nums.filter(function(n){return n%2===0;});
+    if(filter==='first')return nums.some(function(n){return n>=1&&n<=8;});
+    if(filter==='last')return nums.some(function(n){return n>=9&&n<=16;});
+    return true;
+}
+
+// Check if a course overlaps with a specific half
+function overlapsHalf(weeksStr, half){
+    var nums=[],w=weeksStr.replace('周','').replace('(单)','').replace('(双)','').trim();
+    w.split(',').forEach(function(p){p=p.trim();if(p.indexOf('-')>=0){var ab=p.split('-');for(var n=parseInt(ab[0]);n<=parseInt(ab[1]);n++)nums.push(n);}else if(p)nums.push(parseInt(p));});
+    if(weeksStr.indexOf('(单)')>=0||weeksStr.indexOf('(奇)')>=0)nums=nums.filter(function(n){return n%2===1;});
+    if(weeksStr.indexOf('(双)')>=0||weeksStr.indexOf('(偶)')>=0)nums=nums.filter(function(n){return n%2===0;});
+    if(half==='first')return nums.some(function(n){return n>=1&&n<=8;});
+    if(half==='last')return nums.some(function(n){return n>=9&&n<=16;});
+    return false;
+}
+
+function switchWeek(mode,btn){
+    currentWeek=mode;
+    document.querySelectorAll('#weekFilter button').forEach(function(b){b.classList.remove('active');});
+    btn.classList.add('active');
+    var g=document.getElementById('scheduleGrid'); g.classList.add('fading');
+    var l=document.getElementById('courseListView'); l.classList.add('fading');
+    setTimeout(function(){
+        renderGrid();
+        renderCourseList();
+        g.classList.remove('fading');
+        l.classList.remove('fading');
+    },250);
+}
+
+function renderAll(){renderGrid(); renderCourseList();}
+
+function slotHTML(sl,clrInfo){
+    return '<div class="slot" style="background:'+clrInfo.bg+';border-left:4px solid '+clrInfo.border+';color:'+clrInfo.text+';">'
+        +'<div class="sn">'+sl.name+'</div>'
+        +(sl.room?'<div class="rm">'+sl.room+'</div>':'')
+        +(sl.weeks?'<div class="ws">'+sl.weeks+'</div>':'')
+        +'</div>';
+}
+
+function renderGrid(){
+    var view=document.getElementById('scheduleGrid');
+    if(!allCourses||allCourses.length===0){view.innerHTML='<div class="alert alert-info border-0 shadow-sm"><i class="fas fa-info-circle me-2"></i>暂无课程数据，请点击刷新重新获取。</div>';return;}
+
+    var filtered=allCourses.filter(function(c){return inWeekRange(c.weeks||'',currentWeek);});
+
+    var slots={};
+    for(var d=1;d<=5;d++){slots[d]={};for(var p=1;p<=12;p++)slots[d][p]=[];}
+    filtered.forEach(function(c){
+        var day=c.weekday_num||0, ps=c.period_simple||'', m=ps.match(/(\d+)-(\d+)/);
+        if(day>=1 && day<=5 && m){
+            var s=parseInt(m[1]),e=parseInt(m[2]);
+            var ws=c.weeks||'';
+            slots[day][s].push({
+                name:c.kcmc,room:c.room,weeks:sw(ws),end:e,
+                isFirst:overlapsHalf(ws,'first'),
+                isLast:overlapsHalf(ws,'last')
+            });
+        }
+    });
+
+    var items=[];
+    // Header
+    items.push({col:1,row:1,rs:1,class:'gh',inner:'节次'});
+    for(var d=1;d<=5;d++)items.push({col:d+1,row:1,rs:1,class:'gh',inner:WEEKDAYS[d-1]});
+
+    var skip={};
+    for(var d=1;d<=5;d++)skip[d]=0;
+
+    for(var p=1;p<=12;p++){
+        var gridRow=p+1;
+        items.push({col:1,row:gridRow,rs:1,class:'gp',inner:p});
+        for(var d=1;d<=5;d++){
+            if(p<skip[d]) continue; // occupied by spanning class block
+
+            var s=slots[d][p];
+            if(!s||s.length===0){
+                items.push({col:d+1,row:gridRow,rs:1,class:'gc empty',inner:''});
+                skip[d]=p+1;
+                continue;
+            }
+
+            var dedup={}, unique=[];
+            s.forEach(function(sl){
+                var k = sl.name + '|' + (sl.room||'') + '|' + sl.weeks; 
+                if(!dedup[k]){dedup[k]=true;unique.push(sl);}
+            });
+
+            var maxE=p;
+            unique.forEach(function(sl){if(sl.end>maxE)maxE=sl.end;});
+            var rowSpan=maxE-p+1;
+            skip[d]=p+rowSpan;
+
+            var clrInfo=getColor(unique[0].name);
+
+            // In "全部" view, check if we should visually split into first/last week side-by-side
+            if(currentWeek==='all' && unique.length>=2){
+                var firstHalf=[], lastHalf=[], unhandled=[];
+                unique.forEach(function(sl){
+                    if(sl.isFirst && !sl.isLast) firstHalf.push(sl);
+                    else if(sl.isLast && !sl.isFirst) lastHalf.push(sl);
+                    else unhandled.push(sl); // spans both or cannot determine
+                });
+
+                if(firstHalf.length>0 || lastHalf.length>0){
+                    var inner='<div class="half">';
+                    if(firstHalf.length>0){
+                        inner+='<div class="half-label">1-8周</div>';
+                        firstHalf.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+                    }
+                    if(unhandled.length>0){
+                        unhandled.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+                    }
+                    inner+='</div><div class="half">';
+                    if(lastHalf.length>0){
+                        inner+='<div class="half-label">9-16周</div>';
+                        lastHalf.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+                    }
+                    inner+='</div>';
+                    items.push({col:d+1,row:gridRow,rs:rowSpan,class:'gc split',inner:inner});
+                    continue;
+                }
+            }
+
+            // Regular combined cell
+            var inner='';
+            unique.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+            items.push({col:d+1,row:gridRow,rs:rowSpan,class:'gc',inner:inner});
+        }
+    }
+
+    var html='<div class="sch-grid" style="grid-template-rows: auto repeat(12, minmax(65px, 1fr));">';
+    items.forEach(function(it){
+        html+='<div class="'+it.class+'" style="grid-column:'+it.col+';grid-row:'+it.row+(it.rs>1?' / span '+it.rs:'')+';">'+it.inner+'</div>';
+    });
+    html+='</div>';
+    view.innerHTML=html;
+}
+
+function renderCourseList(){
+    var list=document.getElementById('courseListView'), cm={}, order=[];
+    var filteredCourses = allCourses.filter(function(c){return inWeekRange(c.weeks||'',currentWeek);});
+    
+    filteredCourses.forEach(function(c){
+        var k=c.kcmc||c.kch;
+        if(!cm[k]){cm[k]={name:c.kcmc||c.kch,kch:c.kch,jxbmc:c.jxbmc,teacher:c.teacher,zcmc:c.zcmc,credit:c.credit,slots:[],weeks:new Set()};order.push(k);}
+        cm[k].slots.push(c);
+    });
+    
+    document.getElementById('courseCount').textContent=order.length;
+    var h='';
+    
+    if(order.length===0){
+        list.innerHTML='<div class="text-center py-4 text-muted"><i class="fas fa-inbox me-2"></i>所选周数暂无课程</div>';
+        return;
+    }
+    
+    order.forEach(function(k){
+        var info=cm[k], clrInfo=getColor(info.name);
+        var ds=info.slots.map(function(s){
+            return '<div style="margin-bottom:6px;">' + s.weekday + ' ' + s.period 
+                 + (s.room ? '<br><span style="color:#64748b; display:inline-block; margin-top:2px; opacity: 0.9;"><i class="fas fa-map-marker-alt" style="font-size:10px; margin-right:3px;"></i>' + s.room + '</span>' : '') 
+                 + '</div>';
+        });
+        h+='<div class="course-list-item" style="border-left-color:'+clrInfo.border+';">'
+            +'<div class="d-flex justify-content-between align-items-start">'
+            +'<strong style="font-size:14px;color:#1e293b;">'+info.name+'</strong>'
+            +'<span class="badge" style="background:'+clrInfo.border+';color:#0f172a;">'+(info.credit||0)+'学分</span></div>'
+            +'<div style="font-size:12px;color:#64748b;margin-top:4px;">'+(info.jxbmc||'')+' | '+(info.teacher||'')+(info.zcmc?' / '+info.zcmc:'')+'</div>'
+            +'<div style="font-size:12px;color:#94a3b8;margin-top:6px;">'+ds.join('')+'</div>'
+            +'</div>';
+    });
+    list.innerHTML=h;
+}
+
+loadSchedule();
+</script>
+{% endblock %}
