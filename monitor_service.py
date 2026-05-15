@@ -35,6 +35,13 @@ class MonitorService:
         # 通知回调
         self.on_notify: Callable | None = None
 
+        # 自动抢课列表: {id: {kch_id, jxb_id, name, xkkz_id, status, jxbmc}}
+        self._grab_list: dict[str, dict] = {}
+        self._grab_results: dict[str, dict] = {}
+
+        # 抢课回调（由 app.py 注入）
+        self.on_auto_grab: Callable | None = None
+
         # 最后一次完整检查结果（全部）
         self._last_all_results: list[dict] = []
 
@@ -228,6 +235,87 @@ class MonitorService:
             self._results.clear()
             self._notified.clear()
 
+    # ---- 自动抢课 ----
+
+    def add_grab(self, kch_id: str, jxb_id: str, name: str, xkkz_id: str = '',
+                 jxbmc: str = '') -> str:
+        """添加自动抢课任务"""
+        gid = f'grab_{jxb_id}'
+        with self._lock:
+            if gid not in self._grab_list:
+                self._grab_list[gid] = {
+                    'kch_id': kch_id,
+                    'jxb_id': jxb_id,
+                    'name': name,
+                    'xkkz_id': xkkz_id,
+                    'jxbmc': jxbmc,
+                    'status': '监控中',
+                    'attempts': 0,
+                }
+        return gid
+
+    def remove_grab(self, gid: str) -> bool:
+        with self._lock:
+            if gid in self._grab_list:
+                del self._grab_list[gid]
+                self._grab_results.pop(gid, None)
+                return True
+            return False
+
+    def get_grab_list(self) -> dict:
+        with self._lock:
+            result = {}
+            for gid, info in self._grab_list.items():
+                result[gid] = {
+                    **info,
+                    'latest': self._grab_results.get(gid, {}),
+                }
+            return result
+
+    def _check_grabs(self):
+        """在监控循环中检查自动抢课条件"""
+        for gid, info in list(self._grab_list.items()):
+            if info['status'] in ('成功', '已取消'):
+                continue
+            # 查询该课程当前状态
+            results, _ = self.query_course(info['kch_id'])
+            found = None
+            for c in results:
+                if c.get('jxb_id') == info['jxb_id']:
+                    found = c
+                    break
+            if not found:
+                with self._lock:
+                    self._grab_list[gid]['status'] = '课程未找到'
+                continue
+
+            enrolled = found.get('_enrolled', 0)
+            cap = found.get('_capacity', 30)
+            remaining = found.get('_remaining', 0)
+
+            with self._lock:
+                self._grab_results[gid] = {
+                    'enrolled': enrolled,
+                    'capacity': cap,
+                    'remaining': remaining,
+                }
+
+            if remaining > 0 and self.on_auto_grab:
+                # 有空位，触发自动抢课
+                with self._lock:
+                    self._grab_list[gid]['status'] = '尝试选课...'
+                    self._grab_list[gid]['attempts'] += 1
+                try:
+                    success, msg = self.on_auto_grab(info)
+                    with self._lock:
+                        if success:
+                            self._grab_list[gid]['status'] = '成功'
+                        else:
+                            self._grab_list[gid]['status'] = f'失败: {msg[:30]}'
+                except Exception as e:
+                    with self._lock:
+                        self._grab_list[gid]['status'] = f'异常: {str(e)[:30]}'
+
     # ---- 检查逻辑 ----
 
     def check_all(self) -> dict[str, list[dict]]:
@@ -310,11 +398,13 @@ class MonitorService:
 
     def _run_loop(self):
         while self._running:
-            if self._watchlist:
-                try:
+            try:
+                if self._watchlist:
                     self.check_all()
-                except Exception as e:
-                    logger.error(f'监控检查异常: {e}')
+                if self._grab_list:
+                    self._check_grabs()
+            except Exception as e:
+                logger.error(f'监控检查异常: {e}')
             time.sleep(self.config.check_interval)
 
     def get_status_summary(self) -> list[dict]:

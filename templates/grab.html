@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
     <h1><i class="fas fa-crosshairs me-2 text-danger"></i>抢课 / 退课</h1>
-    <p>查询课程直接选课，或从已选课程列表退课</p>
+    <p>查询课程 → 监控抢课 → 有空位自动选；或从已选课程退课</p>
 </div>
 <div class="page-body">
     <div class="row">
@@ -11,7 +11,7 @@
             <!-- Query & Add -->
             <div class="section-card">
                 <h5><i class="fas fa-search me-2 text-primary"></i>查询课程</h5>
-                <p class="text-muted-small">输入课程号，查看教学班并直接选课</p>
+                <p class="text-muted-small">输入课程号，查看教学班并启动监控抢课</p>
                 <div class="input-group mb-3">
                     <input type="text" class="form-control" id="grabCourseInput"
                            placeholder="输入课程号，如 08305011" onkeydown="if(event.key==='Enter') grabQueryCourse()">
@@ -22,25 +22,13 @@
                 <div id="grabQueryResult" style="max-height:500px;overflow-y:auto;"></div>
             </div>
 
-            <!-- Timed Grab -->
+            <!-- Auto Grab List -->
             <div class="section-card">
-                <h5><i class="fas fa-clock me-2 text-primary"></i>定时抢课</h5>
-                <p class="text-muted-small">设定时间自动选课</p>
-                <div class="mb-2">
-                    <label class="form-label">教学班ID</label>
-                    <input type="text" class="form-control" id="timedJxbId" placeholder="从查询结果中复制">
+                <h5><i class="fas fa-bell me-2 text-danger"></i>自动抢课</h5>
+                <p class="text-muted-small">查到的课程点「监控抢课」后，系统自动监控空位</p>
+                <div id="autoGrabList">
+                    <div class="empty-state"><i class="fas fa-inbox"></i><p>暂无任务</p><p class="text-muted-small">搜索课程后点「监控抢课」</p></div>
                 </div>
-                <div class="mb-2">
-                    <label class="form-label">课程号</label>
-                    <input type="text" class="form-control" id="timedKchId" placeholder="输入课程号">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label">目标时间</label>
-                    <input type="datetime-local" class="form-control" id="timedTime">
-                </div>
-                <button class="btn btn-danger" onclick="scheduleTimedGrab()">
-                    <i class="fas fa-bullseye me-1"></i>添加定时任务
-                </button>
             </div>
         </div>
 
@@ -51,14 +39,6 @@
                 <p class="text-muted-small">系统已预加载课表，可直接退选</p>
                 <div id="enrolledList">
                     <div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>加载中...</p></div>
-                </div>
-            </div>
-
-            <!-- Timed Tasks -->
-            <div class="section-card">
-                <h5><i class="fas fa-tasks me-2 text-primary"></i>定时任务 (<span id="taskCount">0</span>)</h5>
-                <div id="timedTaskList">
-                    <div class="empty-state"><i class="fas fa-calendar-plus"></i><p>暂无任务</p></div>
                 </div>
             </div>
         </div>
@@ -75,7 +55,6 @@ function grabQueryCourse() {
     if (!kch_id) { showToast('请输入课程号', 'warning'); return; }
     var btn = document.getElementById('grabQueryBtn');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 查询中...';
-
     apiFetch('/api/monitor/query', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kch_id: kch_id }),
@@ -89,70 +68,85 @@ function grabQueryCourse() {
         lastGrabQuery = data;
         var html = '<div class="mb-1"><small class="text-muted">找到 ' + data.count + ' 个教学班</small></div>';
         data.classes.forEach(function(c) {
-            var conflict = '';
+            var status = '';
             if (c.is_enrolled) {
-                conflict = '<span class="badge bg-secondary">已选</span>';
+                status = '<span class="badge bg-secondary">已选</span>';
             } else if (c.conflict) {
-                conflict = '<span class="conflict-tag"><i class="fas fa-exclamation-triangle"></i> 冲突</span>';
+                status = '<span class="conflict-tag"><i class="fas fa-exclamation-triangle"></i> 冲突</span>';
             } else {
-                conflict = '<span style="color:#22c55e;font-size:12px;"><i class="fas fa-check"></i></span>';
+                status = '<span style="color:#22c55e;font-size:12px;"><i class="fas fa-check"></i> 可抢</span>';
             }
             var remaining = c.remaining > 0
                 ? '<span class="badge badge-available">余'+c.remaining+'</span>'
                 : '<span class="badge badge-full">已满</span>';
-            var addBtn = '';
-            if (c.is_enrolled) {
-                addBtn = '<span class="text-muted fw-bold" style="font-size:13px;"><i class="fas fa-check"></i> 已选</span>';
-            } else if (c.conflict) {
-                addBtn = '<button class="btn btn-sm btn-secondary ms-2" disabled>冲突</button>';
-            } else {
-                addBtn = '<button class="btn btn-sm btn-success ms-2" onclick="grabQuickAdd(\''+c.jxb_id+'\',\''+kch_id+'\')">选课</button>';
-            }
-            
             var cname = c.course_name || kch_id;
+            var addBtn = c.is_enrolled
+                ? '<span class="text-muted">已选</span>'
+                : '<button class="btn btn-sm btn-danger ms-2" onclick="addAutoGrab(\''+c.jxb_id+'\',\''+kch_id+'\',\''+(cname.replace(/'/g,""))+'\')">监控抢课</button>';
             html += '<div class="card mb-1 border" style="font-size:13px;">'
                 + '<div class="card-body py-2 px-3 d-flex justify-content-between align-items-center">'
                 + '<div style="flex:1;min-width:0;">'
-                + '<div><strong>' + cname + '</strong></div>'
-                + '<div style="font-size:12px;">' + (c.skjs || '--') + ' | ' + (c.sksj || '').replace(/<br\s*\/?>/gi,' ') + '</div>'
-                + '<div class="d-flex gap-1 mt-1">' + remaining + ' ' + conflict + '</div>'
-                + '</div>'
-                + '<div class="text-end">'
-                + addBtn + '</div>'
-                + '</div></div>';
+                + '<div><strong>' + cname + '</strong> | ' + (c.skjs || '--') + '</div>'
+                + '<div style="font-size:12px;">' + (c.sksj || '').replace(/<br\s*\/?>/gi,' ') + '</div>'
+                + '<div class="d-flex gap-1 mt-1">' + remaining + ' ' + status + '</div>'
+                + '</div><div class="text-end">' + addBtn + '</div></div></div>';
         });
         div.innerHTML = html;
     });
 }
 
-function grabQuickAdd(jxbId, kchId) {
-    if (!confirm('确定要选这门课吗？')) return;
-    apiFetch('/api/grab/add', {
+function addAutoGrab(jxbId, kchId, name) {
+    if (!confirm('启动自动抢课: ' + name + '？\n系统将持续监控，有空位自动选课')) return;
+    apiFetch('/api/grab/auto/add', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kch_id: kchId, jxb_ids: jxbId }),
+        body: JSON.stringify({ kch_id: kchId, jxb_id: jxbId, name: name }),
     }).then(function(d) {
-        if (d && d.success) { 
-            showToast(d.message, 'success'); 
-            loadEnrolled(); 
-            // 如果成功了，重新查一次课刷新按钮状态：
-            grabQueryCourse();
-        }
+        if (d && d.success) { showToast('已加入自动抢课', 'success'); loadAutoGrabs(); }
         else if (d) { showToast(d.message, 'danger'); }
     });
 }
 
-function scheduleTimedGrab() {
-    var jxb_id = document.getElementById('timedJxbId').value.trim();
-    var kch_id = document.getElementById('timedKchId').value.trim();
-    var timeVal = document.getElementById('timedTime').value;
-    if (!jxb_id) { showToast('请输入教学班ID', 'warning'); return; }
-    if (!timeVal) { showToast('请选择时间', 'warning'); return; }
-    apiFetch('/api/grab/schedule', {
+function removeAutoGrab(gid) {
+    apiFetch('/api/grab/auto/remove', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jxb_id: jxb_id, kch_id: kch_id, target_time: timeVal.replace('T',' ') }),
+        body: JSON.stringify({ gid: gid }),
     }).then(function(d) {
-        if (d && d.success) { showToast(d.message, 'success'); loadTimedTasks(); }
+        if (d && d.success) { showToast('已移除', 'success'); loadAutoGrabs(); }
+    });
+}
+
+function dropCourse(jxbId, kchId) {
+    if (!confirm('确定要退课吗？')) return;
+    apiFetch('/api/drop', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kch_id: kchId, jxb_ids: jxbId }),
+    }).then(function(d) {
+        if (d && d.success) { showToast('退课成功', 'success'); loadEnrolled(); loadAutoGrabs(); }
         else if (d) { showToast(d.message, 'danger'); }
+    });
+}
+
+function loadAutoGrabs() {
+    apiFetch('/api/grab/auto/list').then(function(data) {
+        var div = document.getElementById('autoGrabList');
+        if (!data || !data.grabs || Object.keys(data.grabs).length === 0) {
+            div.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>暂无任务</p></div>'; return;
+        }
+        var html = '';
+        for (var gid in data.grabs) {
+            var g = data.grabs[gid];
+            var latest = g.latest || {};
+            var remaining = latest.remaining !== undefined ? ('余' + latest.remaining + '/' + (latest.capacity || '?')) : '等待检查';
+            var statusCls = g.status === '成功' ? 'text-success' : (g.status.indexOf('失败')>=0 ? 'text-danger' : 'text-muted');
+            html += '<div class="card mb-1 border" style="font-size:13px;">'
+                + '<div class="card-body py-2 px-3 d-flex justify-content-between align-items-center">'
+                + '<div><strong>' + (g.name || g.kch_id) + '</strong><br>'
+                + '<small class="' + statusCls + '">' + g.status + '</small>'
+                + ' <small class="text-muted">' + remaining + '</small></div>'
+                + '<button class="btn btn-sm btn-outline-danger" onclick="removeAutoGrab(\''+gid+'\')"><i class="fas fa-times"></i></button>'
+                + '</div></div>';
+        }
+        div.innerHTML = html;
     });
 }
 
@@ -160,7 +154,7 @@ function loadEnrolled() {
     apiFetch('/api/enrolled').then(function(data) {
         var div = document.getElementById('enrolledList');
         if (!data || !data.success) {
-            div.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>正在加载...</p></div>'; return;
+            div.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>加载中...</p></div>'; return;
         }
         if (data.count === 0) {
             div.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>暂无已选课程</p></div>'; return;
@@ -181,48 +175,8 @@ function loadEnrolled() {
     });
 }
 
-function loadTimedTasks() {
-    apiFetch('/api/grab/tasks').then(function(data) {
-        var div = document.getElementById('timedTaskList');
-        if (!data || !data.tasks || data.tasks.length === 0) {
-            div.innerHTML = '<div class="empty-state"><i class="fas fa-calendar-plus"></i><p>暂无任务</p></div>';
-            document.getElementById('taskCount').textContent = '0'; return;
-        }
-        document.getElementById('taskCount').textContent = data.tasks.length;
-        var html = '<div class="table-responsive"><table class="table table-course"><thead><tr><th>班级</th><th>时间</th><th>状态</th><th>操作</th></tr></thead><tbody>';
-        data.tasks.forEach(function(t) {
-            var st = {'pending':'等待','running':'执行中','success':'成功','failed':'失败','cancelled':'已取消'};
-            html += '<tr><td>'+(t.name||t.jxb_id)+'</td><td>'+t.target_time+'</td><td>'+ (st[t.status]||t.status) +'</td>'
-                + '<td><button class="btn btn-sm btn-outline-danger" onclick="removeTask('+t.id+')"><i class="fas fa-trash"></i></button></td></tr>';
-        });
-        html += '</tbody></table></div>';
-        div.innerHTML = html;
-    });
-}
-
-function removeTask(id) {
-    apiFetch('/api/grab/remove', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
-        .then(function(d){if(d&&d.success)loadTimedTasks();});
-}
-
-function dropCourse(jxb_id, kch_id) {
-    apiFetch('/api/drop', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({jxb_ids: jxb_id, kch_id: kch_id})
-    })
-    .then(function(d){
-        if(d&&d.success){
-            showToast(d.message, 'success');
-            loadEnrolled();
-        } else if(d) {
-            showToast(d.message, 'danger');
-        }
-    });
-}
-
+loadAutoGrabs();
 loadEnrolled();
-loadTimedTasks();
-setInterval(loadTimedTasks, 3000);
+setInterval(loadAutoGrabs, 3000);
 </script>
 {% endblock %}

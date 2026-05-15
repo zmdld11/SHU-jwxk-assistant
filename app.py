@@ -578,6 +578,40 @@ def api_grab_add():
 
 # ==================== 配置 API ====================
 
+
+# ==================== 自动抢课 API ====================
+
+@app.route('/api/grab/auto/add', methods=['POST'])
+def api_grab_auto_add():
+    data = request.get_json()
+    kch_id = data.get('kch_id', '')
+    jxb_id = data.get('jxb_id', '')
+    name = data.get('name', kch_id)
+    if not kch_id or not jxb_id:
+        return jsonify({'success': False, 'message': '请选择课程'})
+    gid = monitor.add_grab(kch_id, jxb_id, name, xkkz_id=config.xkkz_id)
+    # 确保监控已启动
+    if not monitor.is_running:
+        monitor.start()
+    return jsonify({'success': True, 'message': f'已加入自动抢课: {name}', 'gid': gid})
+
+
+@app.route('/api/grab/auto/remove', methods=['POST'])
+def api_grab_auto_remove():
+    data = request.get_json()
+    gid = data.get('gid', '')
+    if monitor.remove_grab(gid):
+        return jsonify({'success': True, 'message': '已移除'})
+    return jsonify({'success': False, 'message': '未找到'})
+
+
+@app.route('/api/grab/auto/list')
+def api_grab_auto_list():
+    return jsonify({'grabs': monitor.get_grab_list()})
+
+
+# ==================== 配置 API ====================
+
 @app.route('/api/config')
 def api_config():
     return jsonify(config.to_dict())
@@ -779,6 +813,41 @@ def main():
 
     # 启动抢课后台线程
     grabber.start()
+
+    # 注册自动抢课回调（监控有空位时自动选课）
+    def auto_grab_callback(info: dict):
+        try:
+            resp = monitor.session.post(
+                f'{config.base_url}/xsxk/zzxkyzb_cxXkTitleMsg.html?gnmkdm=N253512',
+                data={'jxb_ids': info['jxb_id'], 'xkxnm': config.xkxnm,
+                      'xkxqm': config.xkxqm, 'bj': '7', 'kch_id': info['kch_id'],
+                      'njdm_id': config.njdm_id, 'zyh_id': config.zyh_id, 'kklxdm': '01'},
+                timeout=10)
+            if resp.status_code == 200:
+                try:
+                    if isinstance(resp.json(), dict) and resp.json().get('flag') == '0':
+                        return False, resp.json().get('msg', '预检失败')
+                except:
+                    pass
+            resp2 = monitor.session.post(
+                f'{config.base_url}/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html?gnmkdm=N253512',
+                data={'jxb_ids': info['jxb_id'], 'kch_id': info['kch_id'],
+                      'kcmc': f'({info["kch_id"]})自动抢课',
+                      'rwlx': '1', 'rlkz': '0', 'cdrlkz': '0', 'rlzlkz': '1',
+                      'sxbj': '1', 'xxkbj': '0', 'qz': '0', 'cxbj': '0',
+                      'xkkz_id': info.get('xkkz_id', config.xkkz_id),
+                      'njdm_id': config.njdm_id, 'zyh_id': config.zyh_id,
+                      'kklxdm': '01', 'xklc': '2',
+                      'xkxnm': config.xkxnm, 'xkxqm': config.xkxqm, 'jcxx_id': ''},
+                timeout=15)
+            logger.info(f'自动抢课结果: HTTP {resp2.status_code}')
+            if resp2.status_code == 200:
+                load_schedule_cache()
+                return True, '选课成功'
+            return False, f'HTTP {resp2.status_code}'
+        except Exception as e:
+            return False, str(e)
+    monitor.on_auto_grab = auto_grab_callback
 
     logger.info('=' * 40)
     logger.info('选课监控系统 Web 界面启动')
