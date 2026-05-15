@@ -37,7 +37,7 @@
 ### 1. 下载项目源码
 - **通过 Git 获取（推荐）**：打开终端并运行以下命令：
   ```bash
-  git clone https://github.com/your-username/SHU-Course-Helper.git
+  git clone https://github.com/zmdld11/SHU-Course-Helper.git
   cd SHU-Course-Helper
   ```
 - **直接下载**：如果你没有安装 Git，请点击页面右上角绿色的 **Code** 按钮，选择 **Download ZIP**。下载完成后进行解压缩，并进入解压好的文件夹。
