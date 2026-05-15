@@ -1,94 +1,4 @@
-{% extends "base.html" %}
-{% block title %}课程监控 - 上大选课监控{% endblock %}
-{% block extra_head %}
-<style>
-/* Toggle button animation */
-.btn-toggle {
-    position: relative;
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    overflow: hidden;
-}
-.btn-toggle .icon-wrap {
-    display: inline-block;
-    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.btn-toggle.running .icon-wrap {
-    transform: rotate(90deg);
-}
-.btn-toggle .btn-text {
-    display: inline-block;
-    transition: opacity 0.3s ease;
-}
-/* Monitor card header */
-.monitor-card .card-header {
-    background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%);
-    transition: background 0.3s ease;
-}
-.monitor-card .card-header:hover {
-    background: linear-gradient(135deg, #eef2f7 0%, #f8f9fa 100%);
-}
-/* Collapse arrow */
-.collapse-arrow {
-    transition: transform 0.3s ease;
-}
-[data-bs-toggle="collapse"] .collapse-arrow {
-    transform: rotate(0deg);
-}
-[data-bs-toggle="collapse"] .collapse-arrow.collapsed {
-    transform: rotate(-90deg);
-}
-</style>
-{% endblock %}
-{% block content %}
-<div class="page-header">
-    <h1><i class="fas fa-eye me-2 text-primary"></i>课程监控</h1>
-    <p>输入课程号或课程名，将整门课的所有教学班加入监控</p>
-</div>
-<div class="page-body">
-    <div class="row">
-        <div class="col-md-5">
-            <div class="section-card">
-                <h5><i class="fas fa-search me-2 text-primary"></i>查询课程</h5>
-                <p class="text-muted-small">请输入准确的课程号（不可模糊搜索）</p>
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control" id="courseIdInput" placeholder="输入课程号，如 08305011"
-                           onkeydown="if(event.key==='Enter') queryCourse()">
-                    <button class="btn btn-primary" onclick="queryCourse()" id="queryBtn">
-                        <i class="fas fa-search me-1"></i>查询
-                    </button>
-                </div>
-                <div id="courseQueryResult"></div>
-            </div>
-        </div>
-        <div class="col-md-7">
-            <div class="section-card">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0"><i class="fas fa-list me-2 text-primary"></i>监控列表</h5>
-                    <div class="d-flex gap-2" id="monitorControls">
-                        <button class="btn btn-toggle btn-success" id="toggleBtn" onclick="toggleMonitor()" data-state="stopped">
-                            <span class="icon-wrap"><i class="fas fa-play"></i></span>
-                            <span class="btn-text">启动监控</span>
-                        </button>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="refreshData()">
-                            <i class="fas fa-sync me-1"></i>刷新
-                        </button>
-                    </div>
-                </div>
-                <div id="monitorList">
-                    <div class="empty-state">
-                        <i class="fas fa-inbox"></i>
-                        <p>暂无监控课程</p>
-                        <p class="text-muted-small">在左侧查询课程后加入监控</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-{% endblock %}
 
-{% block extra_scripts %}
-<script>
 var lastQueryData = null;
 
 // Format time: each time slot on its own line
@@ -194,7 +104,6 @@ function queryCourse() {
         resultDiv.innerHTML = html;
     });
     }  // closes doQuery
-}
 
 // ---- Add to Monitor ----
 function addAllClasses() {
@@ -327,5 +236,3 @@ function refreshData() {
 // Auto refresh
 refreshData();
 setInterval(refreshData, 5000);
-</script>
-{% endblock %}

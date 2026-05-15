@@ -181,8 +181,51 @@ function switchWeek(mode,btn){
 
 function renderAll(){renderGrid(); renderCourseList();}
 
-function slotHTML(sl,clrInfo){
-    return '<div class="slot" style="background:'+clrInfo.bg+';border-left:4px solid '+clrInfo.border+';color:'+clrInfo.text+';">'
+function parseWeekGantt(ws) {
+    if(!ws) return {min:1, max:16, density:1, isOdd:false, isEven:false};
+    var w=ws.replace('周','').replace('(单)','').replace('(双)','').replace('(奇)','').replace('(偶)','').trim();
+    var isOdd = ws.indexOf('(单)')>=0 || ws.indexOf('(奇)')>=0;
+    var isEven = ws.indexOf('(双)')>=0 || ws.indexOf('(偶)')>=0;
+    var nums=[];
+    w.split(',').forEach(function(p){
+        p=p.trim();
+        if(p.indexOf('-')>=0){
+            var ab=p.split('-');
+            for(var i=parseInt(ab[0]); i<=parseInt(ab[1]); i++) nums.push(i);
+        } else if(p) {
+            nums.push(parseInt(p));
+        }
+    });
+    if(nums.length === 0) return {min:1, max:16, density:1, isOdd:false, isEven:false};
+    nums.sort(function(a,b){return a-b;});
+    var min = nums[0], max = nums[nums.length-1];
+    var density = nums.length / (max - min + 1);
+    return {min:min, max:max, density:density, isOdd:isOdd, isEven:isEven};
+}
+
+function slotHTML(sl,clrInfo, ganttMode){
+    var style = 'background:'+clrInfo.bg+';border-left:4px solid '+clrInfo.border+';color:'+clrInfo.text+';';
+    
+    if(ganttMode) {
+        var gw = parseWeekGantt(sl.weeks);
+        var tW = 16;
+        var sW = Math.max(1, Math.min(tW, gw.min));
+        var eW = Math.max(1, Math.min(tW, gw.max));
+        var lp = ((sW - 1) / tW) * 100;
+        var rp = ((tW - eW) / tW) * 100;
+        
+        // 限制最大缩进为 50% ，防止格子被切割得太碎（最小宽度保持在 50% 或更高）
+        lp = Math.min(Math.max(0, lp), 50);
+        rp = Math.min(Math.max(0, rp), 50);
+        
+        style += 'margin-left:'+lp+'%; margin-right:'+rp+'%;';
+        
+        if (gw.isOdd || gw.isEven || gw.density <= 0.5) {
+           style += 'background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(255,255,255,0.7) 6px, rgba(255,255,255,0.7) 12px);';
+        }
+    }
+
+    return '<div class="slot" style="'+style+'">'
         +'<div class="sn">'+sl.name+'</div>'
         +(sl.room?'<div class="rm">'+sl.room+'</div>':'')
         +(sl.weeks?'<div class="ws">'+sl.weeks+'</div>':'')
@@ -257,15 +300,15 @@ function renderGrid(){
                     var inner='<div class="half">';
                     if(firstHalf.length>0){
                         inner+='<div class="half-label">1-8周</div>';
-                        firstHalf.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+                        firstHalf.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name), false);});
                     }
                     if(unhandled.length>0){
-                        unhandled.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+                        unhandled.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name), false);});
                     }
                     inner+='</div><div class="half">';
                     if(lastHalf.length>0){
                         inner+='<div class="half-label">9-16周</div>';
-                        lastHalf.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+                        lastHalf.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name), false);});
                     }
                     inner+='</div>';
                     items.push({col:d+1,row:gridRow,rs:rowSpan,class:'gc split',inner:inner});
@@ -275,7 +318,7 @@ function renderGrid(){
 
             // Regular combined cell
             var inner='';
-            unique.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name));});
+            unique.forEach(function(sl){inner+=slotHTML(sl,getColor(sl.name), currentWeek==='all' && unique.length===1);});
             items.push({col:d+1,row:gridRow,rs:rowSpan,class:'gc',inner:inner});
         }
     }

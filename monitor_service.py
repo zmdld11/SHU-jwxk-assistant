@@ -111,59 +111,57 @@ class MonitorService:
             'fxbj': '0',
         }
 
-    def query_course(self, kch_id: str) -> tuple[list[dict], str | None]:
-        """查询指定课程号的所有教学班信息
-        返回: (results, error_message)
-        """
-        # 优先用配置文件中的学年学期，再尝试其他可能值
-        configured = (self.config.xkxnm, self.config.xkxqm)
-        fallbacks = [
-            configured,
-            ('2026', '3'),   # 2026-2027学年 当前学期（系统更新后新版）
-            ('2026', '12'),  # 2026-2027学年 秋季学期
-            ('2025', '16'),  # 旧版学期编码
-        ]
-        # 去重
-        seen = set()
-        semester_attempts = []
-        for xnm, xqm in fallbacks:
-            key = f'{xnm}_{xqm}'
-            if key not in seen:
-                seen.add(key)
-                semester_attempts.append((xnm, xqm))
+    def _normalize_items(self, items: list[dict], identifier: str) -> list[dict]:
+        """统一处理 API 返回的课程数据"""
+        for item in items:
+            item.setdefault('yxzrs', '0')
+            item.setdefault('jxbrl', str(self.config.class_capacity))
+            jsxx = item.get('jsxx', '')
+            parts = jsxx.split('/')
+            teacher_name = parts[1] if len(parts) >= 3 else (parts[-1] if parts else '')
+            enrolled = int(item.get('yxzrs', 0))
+            cap = int(item.get('zrs', 0)) or int(item.get('jxbrl', self.config.class_capacity))
+            item['jxbmc'] = item.get('jxbmc') or identifier
+            item['skjs'] = item.get('skjs') or teacher_name
+            item['zrs'] = str(cap)
+            item['_enrolled'] = enrolled
+            item['_capacity'] = cap
+            item['_remaining'] = max(0, cap - enrolled)
+        return items
 
-        for xnm, xqm in semester_attempts:
-            url = f'{self.config.base_url}/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html?gnmkdm=N253512'
-            payload = self._build_payload(kch_id)
+    def query_course(self, kch_id: str) -> tuple[list[dict], str | None]:
+        """查询指定课程号的所有教学班信息"""
+        return self._search(kch_id=kch_id)
+
+    def search_course(self, keyword: str) -> tuple[list[dict], str | None]:
+        """按课程名模糊搜索"""
+        return self._search(keyword=keyword)
+
+    def _search(self, kch_id: str = '', keyword: str = '') -> tuple[list[dict], str | None]:
+        """通用课程搜索"""
+        semesters = [('2026', '3'), ('2026', '12'), ('2025', '16')]
+        url = f'{self.config.base_url}/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html?gnmkdm=N253512'
+
+        seen_sem = set()
+        for xnm, xqm in semesters:
+            key = f'{xnm}_{xqm}'
+            if key in seen_sem: continue
+            seen_sem.add(key)
+            payload = self._build_payload(kch_id or keyword)
             payload['xkxnm'] = xnm
             payload['xkxqm'] = xqm
+            # 模糊搜索：filter_list 放关键词，kch_id 放课程号
+            if keyword and not kch_id:
+                payload['kch_id'] = ''
+                payload['filter_list[0]'] = keyword
             try:
                 resp = self.session.post(url, data=payload, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json()
-                    # 统一字段名（API返回的字段名和代码里用的不一样）
-                    for item in data:
-                        item.setdefault('yxzrs', '0')
-                        item.setdefault('jxbrl', str(self.config.class_capacity))
-                        jsxx = item.get('jsxx', '')
-                        parts = jsxx.split('/')
-                        teacher_name = parts[1] if len(parts) >= 3 else (parts[-1] if parts else '')
-                        enrolled = int(item.get('yxzrs', 0))
-                        cap = int(item.get('zrs', 0)) or int(item.get('jxbrl', self.config.class_capacity))
-                        item['jxbmc'] = item.get('jxbmc') or f'{kch_id}'
-                        item['skjs'] = item.get('skjs') or teacher_name
-                        item['zrs'] = str(cap)
-                        # 监控状态字段
-                        item['_enrolled'] = enrolled
-                        item['_capacity'] = cap
-                        item['_remaining'] = max(0, cap - enrolled)
-                    logger.info(f'查询成功: 学年={xnm}, 学期={xqm}, 返回 {len(data)} 条')
+                    self._normalize_items(data, kch_id or keyword)
+                    logger.info(f'搜索成功: 学年={xnm}, 学期={xqm}, 返回 {len(data)} 条')
                     return data, None
-
-                body = resp.text[:200] if resp.text else '(空)'
-                logger.warning(f'查询课程 {kch_id} 失败: HTTP {resp.status_code} (xnm={xnm}, xqm={xqm}), 响应: {body}')
                 if resp.status_code == 901:
-                    # 901 通常表示会话过期，不需要继续尝试其他学期参数
                     logger.warning('HTTP 901 = 会话已过期，请更新 Cookies')
                     break
             except requests.exceptions.RequestException as e:
@@ -172,8 +170,7 @@ class MonitorService:
             except Exception as e:
                 logger.error(f'解析数据失败 (xnm={xnm}, xqm={xqm}): {e}')
                 continue
-
-        return [], '无法获取课程数据。原因：Cookies 已过期或无效\n请重新登录教务系统，按以下步骤操作：\n1. 用浏览器打开 jwxt.shu.edu.cn 并登录\n2. 按 F12 → 网络(Network) → 找到任意请求\n3. 复制请求头中的 Cookie 值（JSESSIONID 和 route）\n4. 粘贴到 .env 文件中'
+        return [], '无法获取课程数据。Cookies 可能已过期'
 
     # ---- 监控列表管理 ----
 
@@ -239,18 +236,13 @@ class MonitorService:
         for watch_id, info in list(self._watchlist.items()):
             watch_results = []
             if info['type'] == 'course':
-                watch_results = self.query_course(info['kch_id'])
+                watch_results, _ = self.query_course(info['kch_id'])
             elif info['type'] == 'class':
-                # 需要先通过课程号查询，再过滤
-                # 这里简化处理：如果有 kch_id 就用，否则需要提前存储
                 all_data = self._last_all_results
                 watch_results = [
                     c for c in all_data
                     if c.get('jxb_id') == info.get('jxb_id')
                 ]
-                # 如果没有缓存数据，尝试用 jxb_id 前几位作为 kch_id 查询
-                if not watch_results:
-                    pass  # 保留上次结果
 
             # 计算剩余名额
             for c in watch_results:

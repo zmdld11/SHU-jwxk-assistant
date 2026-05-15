@@ -13,11 +13,20 @@ from config import Config
 from monitor_service import MonitorService
 from grabber import CourseGrabber
 
-# 配置日志
+# 配置日志（控制台 + 文件，每次启动清空旧日志）
+LOG_FILE = Path(__file__).parent / 'app.log'
+LOG_FILE.write_text('', encoding='utf-8')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
 )
+# 单独添加文件 handler
+fh = logging.FileHandler(LOG_FILE, encoding='utf-8')
+fh.setLevel(logging.INFO)
+fh.setFormatter(logging.Formatter('%(asctime)s [%(name)s] %(levelname)s: %(message)s'))
+logging.getLogger().addHandler(fh)
+
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -40,7 +49,71 @@ monitor = MonitorService(config)
 grabber = CourseGrabber(config)
 
 # 已选课表缓存
-_schedule_cache: list[dict] = []
+_schedule_cache: list[dict] = []  # [{day, start, end, weeks, name, kch_id, jxb_id}]
+WATCHLIST_FILE = Path(__file__).parent / 'watchlist.json'
+
+
+def load_schedule_cache() -> bool:
+    """加载课表到缓存（app启动时 + 手动刷新）"""
+    global _schedule_cache
+    try:
+        url = f'{config.base_url}/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151'
+        payload = {'xnm': config.xkxnm, 'xqm': config.xkxqm, 'kzlx': 'ck',
+                   'xsdm': '', 'kclbdm': '', 'kclxdm': ''}
+        resp = monitor.session.post(url, data=payload, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            _schedule_cache = []
+            for item in data.get('kbList', []):
+                ps = item.get('jcs', '')
+                start = int(ps.split('-')[0]) if '-' in ps else 0
+                end = int(ps.split('-')[1]) if '-' in ps else 0
+                _schedule_cache.append({
+                    'day': int(item.get('xqj', 0)),
+                    'start': start, 'end': end,
+                    'weeks': parse_weeks(item.get('zcd', '')),
+                    'name': item.get('kcmc', ''),
+                    'kch_id': item.get('kch', '') or item.get('kch_id', ''),
+                    'jxb_id': item.get('jxb_id', ''),
+                })
+            logger.info(f'课表已预加载: {len(_schedule_cache)} 条')
+            return True
+        logger.warning(f'课表预加载失败: HTTP {resp.status_code}')
+        return False
+    except Exception as e:
+        logger.warning(f'课表预加载异常: {e}')
+        return False
+
+
+def load_watchlist():
+    """从文件加载监控列表"""
+    if not WATCHLIST_FILE.exists():
+        return
+    try:
+        data = json.loads(WATCHLIST_FILE.read_text('utf-8'))
+        for item in data:
+            kch_id = item.get('kch_id', '')
+            jxb_filter = item.get('jxb_filter')
+            if kch_id:
+                monitor.add_course(kch_id, item.get('name', kch_id), jxb_filter=jxb_filter)
+        logger.info(f'监控列表已恢复: {len(data)} 项')
+    except Exception as e:
+        logger.warning(f'读取监控列表失败: {e}')
+
+
+def save_watchlist():
+    """保存监控列表到文件"""
+    try:
+        items = []
+        for wid, info in monitor._watchlist.items():
+            items.append({
+                'kch_id': info.get('kch_id', ''),
+                'name': info.get('name', ''),
+                'jxb_filter': info.get('jxb_filter'),
+            })
+        WATCHLIST_FILE.write_text(json.dumps(items, ensure_ascii=False), 'utf-8')
+    except Exception as e:
+        logger.warning(f'保存监控列表失败: {e}')
 
 
 # ==================== 时间/周次解析 ====================
@@ -212,6 +285,7 @@ def api_monitor_add():
         return jsonify({'success': False, 'message': '请输入课程号'})
 
     result_id = monitor.add_course(kch_id, name or kch_id, jxb_filter=jxb_filter)
+    save_watchlist()
     # 查找刚添加的监控项
     summary = monitor.get_status_summary()
     item = next((w for w in summary if w['id'] == result_id), None)
@@ -236,6 +310,7 @@ def api_monitor_remove():
     data = request.get_json()
     watch_id = data.get('id', '')
     if monitor.remove_watch(watch_id):
+        save_watchlist()
         return jsonify({'success': True, 'message': '已移除监控'})
     return jsonify({'success': False, 'message': '未找到该监控项'})
 
@@ -262,13 +337,24 @@ def api_monitor_query():
     if error and not results:
         return jsonify({'success': False, 'message': error, 'count': 0})
 
-    # 冲突检测
+    # 冲突检测 + 课程名查找
     has_schedule = len(_schedule_cache) > 0
+    enrolled_jxbs = {ss.get('jxb_id', '') for ss in _schedule_cache}
+    enrolled_kchs = {ss.get('kch_id', '') for ss in _schedule_cache if ss.get('kch_id')}
+    # 从课表中查找这个课程的名称
+    course_name = kch_id
+    for ss in _schedule_cache:
+        if ss.get('kch_id', '') == kch_id:
+            course_name = ss.get('name', kch_id)
+            break
 
     def make_class_item(c):
         sksj = c.get('sksj', '')
         course_slots = parse_sksj_time(sksj) if sksj else []
         conflict_times = []
+        is_enrolled = c.get('jxb_id', '') in enrolled_jxbs or kch_id in enrolled_kchs
+        if is_enrolled:
+            conflict_times.append('已选')
         if has_schedule and course_slots:
             for cs in course_slots:
                 for ss in _schedule_cache:
@@ -283,19 +369,19 @@ def api_monitor_query():
 
         return {
             'jxb_id': c.get('jxb_id'),
-            'jxbmc': c.get('jxbmc'),
+            'course_name': course_name,
+            'kch_id': kch_id,
             'skjs': c.get('skjs'),
             'sksj': sksj,
             'kkxymc': c.get('kkxymc', ''),
             'xqumc': c.get('xqumc', ''),
             'jxms': c.get('jxms', ''),
-            'yxzrs': c.get('yxzrs', '0'),
-            'zrs': c.get('zrs', str(config.class_capacity)),
             'enrolled': int(c.get('yxzrs', 0)),
-            'capacity': int(c.get('zrs', config.class_capacity)),
-            'remaining': int(c.get('zrs', config.class_capacity)) - int(c.get('yxzrs', '0')),
+            'capacity': int(c.get('zrs', str(config.class_capacity))),
+            'remaining': int(c.get('zrs', str(config.class_capacity))) - int(c.get('yxzrs', '0')),
             'conflict': len(conflict_times) > 0,
             'conflict_with': conflict_times[:3],
+            'is_enrolled': is_enrolled,
         }
 
     return jsonify({
@@ -306,14 +392,46 @@ def api_monitor_query():
     })
 
 
+# ==================== 课程搜索 API ====================
+
+@app.route('/api/monitor/search', methods=['POST'])
+def api_monitor_search():
+    """按名称搜索（不支持，API 只能用课程号查）"""
+    return jsonify({'success': False, 'message': '教务系统不支持名称搜索，请输入课程号查询', 'count': 0})
+
+
+# ==================== 已选课程 API ====================
+
+@app.route('/api/enrolled')
+def api_enrolled():
+    """获取已选课程列表（从课表缓存读取）"""
+    if not _schedule_cache:
+        load_schedule_cache()
+    # 去重并收集 kch_id 和 jxb_id
+    enrolled_set = set()
+    courses = []
+    for ss in _schedule_cache:
+        key = f"{ss.get('kch_id', '')}_{ss.get('jxb_id', '')}"
+        if key not in enrolled_set:
+            enrolled_set.add(key)
+            if ss.get('name'):
+                courses.append({
+                    'kcmc': ss.get('name', ''),
+                    'kch_id': ss.get('kch_id', ''),
+                    'jxb_id': ss.get('jxb_id', ''),
+                })
+    return jsonify({'success': True, 'count': len(courses), 'courses': courses})
+
+
 # ==================== 抢课 API ====================
 
 @app.route('/api/grab/schedule', methods=['POST'])
 def api_grab_schedule():
     data = request.get_json()
     jxb_id = data.get('jxb_id', '')
-    name = data.get('name', '')
-    target_str = data.get('target_time', '')  # "2025-03-01 12:30"
+    kch_id = data.get('kch_id', '')
+    name = data.get('name', '') or kch_id or jxb_id
+    target_str = data.get('target_time', '')
 
     if not jxb_id or not target_str:
         return jsonify({'success': False, 'message': '请填写教学班ID和目标时间'})
@@ -326,7 +444,10 @@ def api_grab_schedule():
     if target_time <= datetime.now():
         return jsonify({'success': False, 'message': '目标时间必须在当前时间之后'})
 
-    task = grabber.schedule_grab(jxb_id, name or jxb_id, target_time)
+    task = grabber.schedule_grab(
+        jxb_id, name or jxb_id, target_time,
+        payload={'kch_id': kch_id, 'xkkz_id': config.xkkz_id}
+    )
     return jsonify({
         'success': True,
         'message': f'已安排抢课任务: {name or jxb_id} 于 {target_str}',
@@ -346,6 +467,113 @@ def api_grab_remove():
     if grabber.remove_task(task_id):
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': '未找到该任务'})
+
+
+# ==================== 退课 API ====================
+
+@app.route('/api/drop', methods=['POST'])
+def api_drop():
+    """直接退课"""
+    data = request.get_json()
+    kch_id = data.get('kch_id', '')
+    jxb_ids = data.get('jxb_ids', '')
+
+    if not kch_id or not jxb_ids:
+        return jsonify({'success': False, 'message': '请输入课程号和教学班ID'})
+
+    url = f'{config.base_url}/xsxk/zzxkyzb_tuikBcZzxkYzb.html?gnmkdm=N253512'
+    payload = {
+        'kch_id': kch_id,
+        'jxb_ids': jxb_ids,
+        'xkxnm': config.xkxnm,
+        'xkxqm': config.xkxqm,
+        'txbsfrl': '1',
+    }
+
+    try:
+        resp = monitor.session.post(url, data=payload, timeout=10)
+        logger.info(f'退课请求: HTTP {resp.status_code}')
+        if resp.status_code == 200:
+            try:
+                result = resp.json()
+                # 退课成功后刷新课表缓存
+                load_schedule_cache()
+                return jsonify({'success': True, 'message': '退课成功', 'detail': result})
+            except:
+                load_schedule_cache()
+                return jsonify({'success': True, 'message': '退课请求已发送', 'detail': resp.text[:200]})
+        return jsonify({'success': False, 'message': f'退课失败 HTTP {resp.status_code}'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'网络错误: {str(e)}'})
+
+
+# ==================== 选课 API ====================
+
+@app.route('/api/grab/add', methods=['POST'])
+def api_grab_add():
+    """立即选课（直接调用教务系统选课接口）"""
+    import re
+
+    data = request.get_json()
+    jxb_ids = data.get('jxb_ids', '')
+    kch_id = data.get('kch_id', '')
+    kcmc = data.get('kcmc', '')
+    xkkz_id = data.get('xkkz_id', config.xkkz_id)
+
+    if not jxb_ids or not kch_id:
+        return jsonify({'success': False, 'message': '请输入课程号和教学班ID'})
+
+    if not kcmc:
+        kcmc = f'({kch_id}) - 选课'
+
+    # Step 1: 预检（cxXkTitleMsg）— 与浏览器行为一致
+    pre_url = f'{config.base_url}/xsxk/zzxkyzb_cxXkTitleMsg.html?gnmkdm=N253512'
+    pre_payload = {
+        'jxb_ids': jxb_ids, 'xkxnm': config.xkxnm, 'xkxqm': config.xkxqm,
+        'bj': '7', 'kch_id': kch_id,
+        'njdm_id': config.njdm_id, 'zyh_id': config.zyh_id, 'kklxdm': '01',
+    }
+    try:
+        pre_resp = monitor.session.post(pre_url, data=pre_payload, timeout=10)
+        if pre_resp.status_code == 200:
+            try:
+                pre_result = pre_resp.json()
+                if isinstance(pre_result, dict) and pre_result.get('flag') == '0':
+                    return jsonify({'success': False, 'message': pre_result.get('msg', '预检未通过，可能不在选课时段内')})
+            except:
+                pass
+        # 即使预检失败也尝试正式选课
+    except Exception as e:
+        logger.warning(f'选课预检异常: {e}')
+
+    # Step 2: 正式选课
+    url = f'{config.base_url}/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html?gnmkdm=N253512'
+    payload = {
+        'jxb_ids': jxb_ids, 'kch_id': kch_id, 'kcmc': kcmc,
+        'rwlx': '1', 'rlkz': '0', 'cdrlkz': '0', 'rlzlkz': '1',
+        'sxbj': '1', 'xxkbj': '0', 'qz': '0', 'cxbj': '0',
+        'xkkz_id': xkkz_id, 'njdm_id': config.njdm_id, 'zyh_id': config.zyh_id,
+        'kklxdm': '01', 'xklc': '2',
+        'xkxnm': config.xkxnm, 'xkxqm': config.xkxqm, 'jcxx_id': '',
+    }
+    try:
+        resp = monitor.session.post(url, data=payload, timeout=15)
+        logger.info(f'选课请求: HTTP {resp.status_code}')
+        txt = resp.text
+        if resp.status_code == 200:
+            try:
+                result = resp.json()
+                if isinstance(result, dict) and result.get('flag') == '0':
+                    return jsonify({'success': False, 'message': result.get('msg', '选课失败')})
+                # 选课成功后刷新课表缓存
+                load_schedule_cache()
+                return jsonify({'success': True, 'message': '选课成功！请刷新教务系统页面确认', 'detail': result})
+            except:
+                pass
+            return jsonify({'success': True, 'message': '选课请求已发送，请刷新确认', 'detail': txt[:200]})
+        return jsonify({'success': False, 'message': f'选课失败 HTTP {resp.status_code}'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'网络错误: {str(e)}'})
 
 
 # ==================== 配置 API ====================
@@ -490,25 +718,29 @@ def api_config_update():
 @app.route('/api/schedule')
 def api_schedule():
     """查询当前学生的个人课表"""
+    # 重新从 API 获取完整数据（包含教师、教室、周次等）
     url = f'{config.base_url}/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151'
-    payload = {
-        'xnm': config.xkxnm,
-        'xqm': config.xkxqm,
-        'kzlx': 'ck',
-        'xsdm': '',
-        'kclbdm': '',
-        'kclxdm': '',
-    }
+    payload = {'xnm': config.xkxnm, 'xqm': config.xkxqm, 'kzlx': 'ck',
+               'xsdm': '', 'kclbdm': '', 'kclxdm': ''}
     try:
         resp = monitor.session.post(url, data=payload, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            kb_list = data.get('kbList', [])
             global _schedule_cache
             _schedule_cache = []
             courses = []
-            for item in kb_list:
-                slot = {
+            for item in data.get('kbList', []):
+                ps = item.get('jcs', '')
+                start = int(ps.split('-')[0]) if '-' in ps else 0
+                end = int(ps.split('-')[1]) if '-' in ps else 0
+                _schedule_cache.append({
+                    'day': int(item.get('xqj', 0)), 'start': start, 'end': end,
+                    'weeks': parse_weeks(item.get('zcd', '')),
+                    'name': item.get('kcmc', ''),
+                    'kch_id': item.get('kch', '') or item.get('kch_id', ''),
+                    'jxb_id': item.get('jxb_id', ''),
+                })
+                courses.append({
                     'kcmc': item.get('kcmc', ''),
                     'kch': item.get('kch', ''),
                     'jxbmc': item.get('jxbmc', ''),
@@ -520,19 +752,9 @@ def api_schedule():
                     'weekday': item.get('xqjmc', ''),
                     'weekday_num': item.get('xqj', 0),
                     'period': item.get('jc', ''),
-                    'period_simple': item.get('jcs', ''),
+                    'period_simple': ps,
                     'weeks': item.get('zcd', ''),
                     'credit': item.get('xf', ''),
-                    'khfsmc': item.get('khfsmc', ''),
-                    'ksfsmc': item.get('ksfsmc', ''),
-                }
-                courses.append(slot)
-                _schedule_cache.append({
-                    'day': int(slot['weekday_num']),
-                    'start': int(slot['period_simple'].split('-')[0]) if '-' in slot['period_simple'] else 0,
-                    'end': int(slot['period_simple'].split('-')[1]) if '-' in slot['period_simple'] else 0,
-                    'weeks': parse_weeks(slot['weeks']),
-                    'name': slot['kcmc'],
                 })
             return jsonify({'success': True, 'count': len(courses), 'courses': courses})
         return jsonify({'success': False, 'message': f'请求失败 HTTP {resp.status_code}'})
@@ -551,6 +773,9 @@ def main():
         logger.warning('请复制 .env.example 为 .env 并填写配置')
     else:
         logger.info('配置验证通过')
+        # 预加载课表和监控列表（仅配置完整时）
+        load_schedule_cache()
+        load_watchlist()
 
     # 启动抢课后台线程
     grabber.start()

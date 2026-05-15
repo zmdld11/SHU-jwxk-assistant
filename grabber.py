@@ -39,9 +39,10 @@ class CourseGrabber:
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
-    def schedule_grab(self, jxb_id: str, name: str, target_time: datetime) -> GrabTask:
+    def schedule_grab(self, jxb_id: str, name: str, target_time: datetime,
+                       payload: dict | None = None) -> GrabTask:
         """添加一个定时抢课任务"""
-        task = GrabTask(jxb_id=jxb_id, name=name, target_time=target_time)
+        task = GrabTask(jxb_id=jxb_id, name=name, target_time=target_time, payload=payload or {})
         with self._lock:
             self._tasks.append(task)
         logger.info(f'已添加抢课任务: {name} 于 {target_time}')
@@ -71,29 +72,33 @@ class CourseGrabber:
             ]
 
     def _do_grab(self, task: GrabTask) -> bool:
-        """
-        执行选课请求
-        TODO: 用户提供选课API后实现
-        """
+        """执行选课请求"""
         logger.info(f'正在尝试抢课: {task.name} ({task.jxb_id})')
-
-        # =========================================
-        # 占位实现 - 需要用户提供以下信息:
-        # 1. 选课API的URL
-        # 2. 请求方法 (POST/GET)
-        # 3. 请求参数格式
-        # 4. 请求头
-        # =========================================
-
-        # 示例（需要替换为实际API）:
-        # url = f'{self.config.base_url}/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html'
-        # payload = { ... }
-        # resp = self.session.post(url, data=payload)
-        # if resp.status_code == 200:
-        #     return True
-
-        task.result_msg = '选课API尚未配置，请在设置中填写选课接口信息'
-        return False
+        url = f'{self.config.base_url}/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html?gnmkdm=N253512'
+        payload = {
+            'jxb_ids': task.jxb_id,
+            'kch_id': task.payload.get('kch_id', ''),
+            'kcmc': task.payload.get('kcmc', f'({task.payload.get("kch_id", "")})抢课'),
+            'rwlx': '1', 'rlkz': '0', 'cdrlkz': '0', 'rlzlkz': '1',
+            'sxbj': '1', 'xxkbj': '0', 'qz': '0', 'cxbj': '0',
+            'xkkz_id': task.payload.get('xkkz_id', self.config.xkkz_id),
+            'njdm_id': self.config.njdm_id,
+            'zyh_id': self.config.zyh_id,
+            'kklxdm': '01', 'xklc': '2',
+            'xkxnm': self.config.xkxnm,
+            'xkxqm': self.config.xkxqm,
+            'jcxx_id': '',
+        }
+        try:
+            resp = self.session.post(url, data=payload, timeout=15)
+            if resp.status_code == 200:
+                task.result_msg = '选课请求已发送'
+                return True
+            task.result_msg = f'HTTP {resp.status_code}'
+            return False
+        except Exception as e:
+            task.result_msg = str(e)
+            return False
 
     def _process_task(self, task: GrabTask):
         """处理单个抢课任务"""
