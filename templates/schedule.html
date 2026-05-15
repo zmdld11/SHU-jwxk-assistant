@@ -147,8 +147,8 @@ function inWeekRange(ws,filter){
     if(filter==='all')return true;
     var nums=[],w=ws.replace('周','').replace('(单)','').replace('(双)','').trim();
     w.split(',').forEach(function(p){p=p.trim();if(p.indexOf('-')>=0){var ab=p.split('-');for(var n=parseInt(ab[0]);n<=parseInt(ab[1]);n++)nums.push(n);}else if(p)nums.push(parseInt(p));});
-    if(ws.indexOf('(单)')>=0||ws.indexOf('(奇)')>=0)nums=nums.filter(function(n){return n%2===1;});
-    if(ws.indexOf('(双)')>=0||ws.indexOf('(偶)')>=0)nums=nums.filter(function(n){return n%2===0;});
+    if(ws.indexOf('单')>=0||ws.indexOf('奇')>=0)nums=nums.filter(function(n){return n%2===1;});
+    if(ws.indexOf('双')>=0||ws.indexOf('偶')>=0)nums=nums.filter(function(n){return n%2===0;});
     if(filter==='first')return nums.some(function(n){return n>=1&&n<=8;});
     if(filter==='last')return nums.some(function(n){return n>=9&&n<=16;});
     return true;
@@ -158,8 +158,8 @@ function inWeekRange(ws,filter){
 function overlapsHalf(weeksStr, half){
     var nums=[],w=weeksStr.replace('周','').replace('(单)','').replace('(双)','').trim();
     w.split(',').forEach(function(p){p=p.trim();if(p.indexOf('-')>=0){var ab=p.split('-');for(var n=parseInt(ab[0]);n<=parseInt(ab[1]);n++)nums.push(n);}else if(p)nums.push(parseInt(p));});
-    if(weeksStr.indexOf('(单)')>=0||weeksStr.indexOf('(奇)')>=0)nums=nums.filter(function(n){return n%2===1;});
-    if(weeksStr.indexOf('(双)')>=0||weeksStr.indexOf('(偶)')>=0)nums=nums.filter(function(n){return n%2===0;});
+    if(weeksStr.indexOf('单')>=0||weeksStr.indexOf('奇')>=0)nums=nums.filter(function(n){return n%2===1;});
+    if(weeksStr.indexOf('双')>=0||weeksStr.indexOf('偶')>=0)nums=nums.filter(function(n){return n%2===0;});
     if(half==='first')return nums.some(function(n){return n>=1&&n<=8;});
     if(half==='last')return nums.some(function(n){return n>=9&&n<=16;});
     return false;
@@ -183,9 +183,9 @@ function renderAll(){renderGrid(); renderCourseList();}
 
 function parseWeekGantt(ws) {
     if(!ws) return {min:1, max:16, density:1, isOdd:false, isEven:false};
-    var w=ws.replace('周','').replace('(单)','').replace('(双)','').replace('(奇)','').replace('(偶)','').trim();
-    var isOdd = ws.indexOf('(单)')>=0 || ws.indexOf('(奇)')>=0;
-    var isEven = ws.indexOf('(双)')>=0 || ws.indexOf('(偶)')>=0;
+    var w=ws.replace('周','').replace('/\\(?(单|双|奇|偶)\\)?/g','').replace('单','').replace('双','').replace('奇','').replace('偶','').trim();
+    var isOdd = ws.indexOf('单')>=0 || ws.indexOf('奇')>=0;
+    var isEven = ws.indexOf('双')>=0 || ws.indexOf('偶')>=0;
     var nums=[];
     w.split(',').forEach(function(p){
         p=p.trim();
@@ -208,20 +208,37 @@ function slotHTML(sl,clrInfo, ganttMode){
     
     if(ganttMode) {
         var gw = parseWeekGantt(sl.weeks);
+        var adjMin = gw.min;
+        var adjMax = gw.max;
+        
+        if (gw.isOdd || gw.isEven) {
+            if (adjMin % 2 === 0) adjMin -= 1;
+            if (adjMax % 2 !== 0) adjMax += 1;
+        }
+
         var tW = 16;
-        var sW = Math.max(1, Math.min(tW, gw.min));
-        var eW = Math.max(1, Math.min(tW, gw.max));
+        var sW = Math.max(1, Math.min(tW, adjMin));
+        var eW = Math.max(1, Math.min(tW, adjMax));
         var lp = ((sW - 1) / tW) * 100;
         var rp = ((tW - eW) / tW) * 100;
         
-        // 限制最大缩进为 50% ，防止格子被切割得太碎（最小宽度保持在 50% 或更高）
         lp = Math.min(Math.max(0, lp), 50);
         rp = Math.min(Math.max(0, rp), 50);
         
         style += 'margin-left:'+lp+'%; margin-right:'+rp+'%;';
         
-        if (gw.isOdd || gw.isEven || gw.density <= 0.5) {
-           style += 'background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(255,255,255,0.7) 6px, rgba(255,255,255,0.7) 12px);';
+        if (gw.isOdd || gw.isEven) {
+            var totalWeeks = Math.max(1, adjMax - adjMin + 1);
+            var stops = [];
+            var stripePct = 100 / totalWeeks;
+            for (var i = 0; i < totalWeeks; i++) {
+                var isColor = gw.isOdd ? (i % 2 === 0) : (i % 2 !== 0);
+                var c = isColor ? 'transparent' : 'rgba(255,255,255,0.85)';
+                stops.push(c + ' ' + (i * stripePct).toFixed(2) + '%', c + ' ' + ((i + 1) * stripePct).toFixed(2) + '%');
+            }
+            style += 'background-image: linear-gradient(to right, ' + stops.join(', ') + ');';
+        } else if (gw.density <= 0.5) {
+            style += 'background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(255,255,255,0.7) 6px, rgba(255,255,255,0.7) 12px);';
         }
     }
 
