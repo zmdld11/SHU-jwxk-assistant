@@ -370,55 +370,60 @@ def api_config_validate():
 @app.route('/api/update_cookies', methods=['POST'])
 def api_update_cookies():
     """
-    从浏览器自动接收 Cookies（配合浏览器书签工具使用）
-    请求体: {"cookies": "JSESSIONID=xxx; route=xxx"}
+    从浏览器接收 Cookies。支持多种格式：
+    1. "JSESSIONID=xxx; route=xxx"  (标准 Cookie 字符串)
+    2. {"JSESSIONID": "xxx", "route": "xxx"}  (JSON 对象)
     """
+    import re
+
     data = request.get_json()
-    cookie_str = data.get('cookies', '')
+    if not data:
+        return jsonify({'success': False, 'message': '未收到数据'})
 
-    if not cookie_str:
-        return jsonify({'success': False, 'message': '未收到 Cookies'})
-
-    # 解析 cookie 字符串
     updated = {}
-    for pair in cookie_str.split(';'):
-        pair = pair.strip()
-        if '=' in pair:
-            key, value = pair.split('=', 1)
-            if key in ('JSESSIONID', 'route'):
-                updated[key] = value
+
+    # 从字符串解析 key=value 对
+    raw_val = data.get('cookies', '') or data.get('raw', '')
+    if isinstance(raw_val, str):
+        for m in re.finditer(r'(JSESSIONID|route)\s*=\s*([^\s;]+)', raw_val, re.IGNORECASE):
+            updated[m.group(1).upper()] = m.group(2)
+
+    # 也支持直接传键值对
+    for key in ('JSESSIONID', 'route'):
+        if key in data:
+            updated[key] = str(data[key])
+        if key.upper() in data:
+            updated[key.upper()] = str(data[key.upper()])
 
     if not updated:
         return jsonify({'success': False, 'message': '未找到 JSESSIONID 或 route'})
 
-    # 更新 .env 文件
+    # 更新 .env
     env_path = Path(__file__).parent / '.env'
     if not env_path.exists():
         return jsonify({'success': False, 'message': '.env 文件不存在'})
 
-    lines = env_path.read_text('utf-8').splitlines()
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        for key, value in updated.items():
-            if stripped.startswith(f'COOKIE_{key}=') or stripped == f'COOKIE_{key}={value}':
-                line = f'COOKIE_{key}={value}'
-                break
-        new_lines.append(line)
-    env_path.write_text('\n'.join(new_lines) + '\n', 'utf-8')
+    content = env_path.read_text('utf-8')
+    for key, value in updated.items():
+        k = f'COOKIE_{key.upper()}'
+        if re.search(rf'^{k}=', content, re.MULTILINE):
+            content = re.sub(rf'^{k}=.*', f'{k}={value}', content, flags=re.MULTILINE)
+        else:
+            content += f'{k}={value}\n'
 
-    # 重新加载配置并重建 session
+    env_path.write_text(content, 'utf-8')
+
+    # 重新加载
     global config, monitor
-    old_session_id = config.cookie_jsessionid
     config = Config()
     monitor.config = config
-    monitor._session = None  # 下次请求自动用新 cookies 重建 session
+    monitor._session = None
 
-    logger.info(f'Cookies 已更新: JSESSIONID={old_session_id[:8]}... -> {config.cookie_jsessionid[:8]}...')
+    logger.info(f'Cookies 已更新: {", ".join(updated.keys())}')
 
     return jsonify({
         'success': True,
-        'message': f'Cookies 已更新！{", ".join(updated.keys())}',
+        'message': f'已更新: {", ".join(updated.keys())}',
         'updated': list(updated.keys()),
     })
 
@@ -454,15 +459,18 @@ def api_config_update():
         if field in data and data[field] is not None:
             new_value = str(data[field]).strip()
             found = False
-            for i, line in enumerate(lines):
+            new_lines = []
+            for line in lines:
                 if line.strip().startswith(f'{env_key}='):
-                    lines[i] = f'{env_key}={new_value}'
-                    found = True
-                    updated_keys.append(env_key)
-                    break
+                    if not found:
+                        new_lines.append(f'{env_key}={new_value}')
+                        found = True
+                else:
+                    new_lines.append(line)
             if not found:
-                lines.append(f'{env_key}={new_value}')
-                updated_keys.append(env_key)
+                new_lines.append(f'{env_key}={new_value}')
+            lines = new_lines
+            updated_keys.append(env_key)
 
     env_path.write_text('\n'.join(lines) + '\n', 'utf-8')
 

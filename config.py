@@ -13,7 +13,7 @@ class Config:
     def __init__(self, env_path: str | None = None):
         if env_path is None:
             env_path = Path(__file__).parent / '.env'
-        load_dotenv(env_path)
+        load_dotenv(env_path, override=True)
 
         # Cookies
         self.cookie_jsessionid = os.getenv('COOKIE_JSESSIONID', '')
