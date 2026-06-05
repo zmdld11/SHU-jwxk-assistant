@@ -51,6 +51,7 @@ grabber = CourseGrabber(config)
 # 已选课表缓存
 _schedule_cache: list[dict] = []  # [{day, start, end, weeks, name, kch_id, jxb_id}]
 WATCHLIST_FILE = Path(__file__).parent / 'watchlist.json'
+env_path = Path(__file__).parent / '.env'
 
 
 def load_schedule_cache() -> bool:
@@ -83,6 +84,68 @@ def load_schedule_cache() -> bool:
     except Exception as e:
         logger.warning(f'课表预加载异常: {e}')
         return False
+
+
+def auto_detect_params():
+    """从教务系统页面自动提取 xkkz_id 等参数"""
+    global config, monitor
+    updated = []
+    try:
+        url = f'{config.base_url}/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default'
+        resp = monitor.session.get(url, timeout=10)
+        if resp.status_code != 200:
+            logger.warning('自动检测参数: 页面获取失败')
+            return updated
+        html = resp.text
+
+        # 提取 xkkz_id（页面隐藏字段）
+        m = re.search(r'name=\"firstXkkzId\"[^>]*value=\"([A-Fa-f0-9]{30,35})\"', html)
+        if m:
+            new_xkkz = m.group(1).upper()
+            if new_xkkz != config.xkkz_id:
+                logger.info(f'自动检测到新 xkkz_id: {new_xkkz[:8]}... (旧: {config.xkkz_id[:8]}...)')
+                lines = env_path.read_text('utf-8').splitlines()
+                found = False
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('XKKZ_ID='):
+                        lines[i] = f'XKKZ_ID={new_xkkz}'
+                        found = True
+                        break
+                if not found:
+                    lines.append(f'XKKZ_ID={new_xkkz}')
+                env_path.write_text('\n'.join(lines) + '\n', 'utf-8')
+                config = Config()
+                updated.append('xkkz_id')
+
+        # 提取学期参数（页面隐藏字段）
+        xnm_m = re.search(r'name=\"xkxnm\"[^>]*value=\"(\d{4})\"', html)
+        xqm_m = re.search(r'name=\"xkxqm\"[^>]*value=\"(\d+)\"', html)
+        if xnm_m and xqm_m:
+            new_xnm = xnm_m.group(1)
+            new_xqm = xqm_m.group(1)
+            if new_xnm != config.xkxnm or new_xqm != config.xkxqm:
+                logger.info(f'自动检测到新学期: {new_xnm}/{new_xqm} (旧: {config.xkxnm}/{config.xkxqm})')
+                lines = env_path.read_text('utf-8').splitlines() if not updated else env_path.read_text('utf-8').splitlines()
+                for pair, env_key in [((new_xnm, 'XKXNM'), (new_xqm, 'XKXQM'))]:
+                    val, key = pair
+                    found = False
+                    for i, line in enumerate(lines):
+                        if line.strip().startswith(f'{key}='):
+                            lines[i] = f'{key}={val}'
+                            found = True
+                            break
+                    if not found:
+                        lines.append(f'{key}={val}')
+                env_path.write_text('\n'.join(lines) + '\n', 'utf-8')
+                config = Config()
+                updated.append('semester')
+
+    except Exception as e:
+        logger.warning(f'自动检测参数异常: {e}')
+    if updated:
+        monitor.config = config
+        monitor._session = None
+    return updated
 
 
 def load_watchlist():
@@ -807,6 +870,10 @@ def main():
         logger.warning('请复制 .env.example 为 .env 并填写配置')
     else:
         logger.info('配置验证通过')
+        # 自动检测参数更新
+        updated = auto_detect_params()
+        if updated:
+            logger.info(f'自动更新参数: {updated}')
         # 预加载课表和监控列表（仅配置完整时）
         load_schedule_cache()
         load_watchlist()
