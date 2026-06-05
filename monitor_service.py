@@ -80,7 +80,7 @@ class MonitorService:
             'jg_id': self.config.jg_id,
             'zyh_id': self.config.zyh_id,
             'zyfx_id': self.config.zyfx_id,
-            'txbsfrl': '0',
+            'txbsfrl': '1',
             'njdm_id': self.config.njdm_id,
             'bh_id': self.config.bh_id,
             'xbm': self.config.xbm,
@@ -95,6 +95,7 @@ class MonitorService:
             'kzybkxy': '0',
             'sfznkx': '0',
             'zdkxms': '0',
+            'sfkxq': '1',
             'bhbcyxkjxb': '0',
             'sfkcfx': '1',
             'bbhzxjxb': '0',
@@ -107,12 +108,12 @@ class MonitorService:
             'rlkz': '0',
             'cdrlkz': '0',
             'cxcykclxxskg': '0',
-            'rlzlkz': '0',
+            'rlzlkz': '1',
             'kklxdm': '01',
             'kch_id': kch_id,
             'jxbzcxskg': '0',
             'zxgbxkkg': '0',
-            'xklc': '1',
+            'xklc': '2',
             'xkkz_id': self.config.xkkz_id,
             'cxbj': '0',
             'fxbj': '0',
@@ -146,7 +147,7 @@ class MonitorService:
 
     def _search(self, kch_id: str = '', keyword: str = '') -> tuple[list[dict], str | None]:
         """通用课程搜索"""
-        semesters = [('2026', '3'), ('2026', '12'), ('2025', '16')]
+        semesters = [('2025', '32'), ('2025', '16'), ('2026', '3')]
         url = f'{self.config.base_url}/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html?gnmkdm=N253512'
 
         seen_sem = set()

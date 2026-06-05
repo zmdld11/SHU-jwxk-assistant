@@ -842,6 +842,12 @@ def main():
                 timeout=15)
             logger.info(f'自动抢课结果: HTTP {resp2.status_code}')
             if resp2.status_code == 200:
+                try:
+                    result = resp2.json()
+                    if isinstance(result, dict) and result.get('flag') == '0':
+                        return False, result.get('msg', '选课失败')
+                except:
+                    pass
                 load_schedule_cache()
                 return True, '选课成功'
             return False, f'HTTP {resp2.status_code}'
