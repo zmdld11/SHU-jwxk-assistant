@@ -621,6 +621,9 @@ def api_grab_add():
     }
     try:
         resp = monitor.session.post(url, data=payload, timeout=15)
+        if resp.status_code == 901:
+            monitor.mark_cookies_invalid()
+            return jsonify({'success': False, 'message': 'Cookies已过期，请更新后重试'})
         logger.info(f'选课请求: HTTP {resp.status_code}')
         txt = resp.text
         if resp.status_code == 200:
@@ -670,10 +673,22 @@ def api_grab_auto_remove():
 
 @app.route('/api/grab/auto/list')
 def api_grab_auto_list():
-    return jsonify({'grabs': monitor.get_grab_list()})
+    return jsonify({
+        'grabs': monitor.get_grab_list(),
+        'cookies_valid': not monitor.cookies_invalid,
+    })
 
 
 # ==================== 配置 API ====================
+
+@app.route('/api/health')
+def api_health():
+    return jsonify({
+        'cookies_valid': not monitor.cookies_invalid,
+        'schedule_loaded': len(_schedule_cache) > 0,
+        'monitor_running': monitor.is_running,
+    })
+
 
 @app.route('/api/config')
 def api_config():
@@ -883,6 +898,8 @@ def main():
 
     # 注册自动抢课回调（监控有空位时自动选课）
     def auto_grab_callback(info: dict):
+        if monitor.cookies_invalid:
+            return False, 'Cookies已过期'
         try:
             resp = monitor.session.post(
                 f'{config.base_url}/xsxk/zzxkyzb_cxXkTitleMsg.html?gnmkdm=N253512',

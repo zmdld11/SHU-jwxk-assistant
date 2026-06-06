@@ -23,24 +23,19 @@ class MonitorService:
         self._thread = None
         self._lock = threading.Lock()
 
-        # 监控列表: {id: {"type": "course"/"class", "kch_id": ..., "jxb_id": ..., "name": ...}}
+        # 监控列表
         self._watchlist: dict[str, dict] = {}
-
-        # 最新检查结果: {id: {...}}
         self._results: dict[str, list[dict]] = {}
-
-        # 已通知集合
         self._notified: set[str] = set()
-
-        # 通知回调
         self.on_notify: Callable | None = None
 
-        # 自动抢课列表: {id: {kch_id, jxb_id, name, xkkz_id, status, jxbmc}}
+        # 自动抢课
         self._grab_list: dict[str, dict] = {}
         self._grab_results: dict[str, dict] = {}
-
-        # 抢课回调（由 app.py 注入）
         self.on_auto_grab: Callable | None = None
+
+        # Cookie 有效性
+        self._cookies_invalid = False
 
         # 最后一次完整检查结果（全部）
         self._last_all_results: list[dict] = []
@@ -171,6 +166,7 @@ class MonitorService:
                     return data, None
                 if resp.status_code == 901:
                     logger.warning('HTTP 901 = 会话已过期，请更新 Cookies')
+                    self.mark_cookies_invalid()
                     break
             except requests.exceptions.RequestException as e:
                 logger.error(f'网络请求失败 (xnm={xnm}, xqm={xqm}): {e}')
@@ -275,6 +271,8 @@ class MonitorService:
 
     def _check_grabs(self):
         """在监控循环中检查自动抢课条件"""
+        if self._cookies_invalid:
+            return
         for gid, info in list(self._grab_list.items()):
             if info['status'] in ('成功', '已取消'):
                 continue
@@ -396,6 +394,18 @@ class MonitorService:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def cookies_invalid(self) -> bool:
+        return self._cookies_invalid
+
+    def mark_cookies_invalid(self):
+        self._cookies_invalid = True
+        self._running = False  # 停止所有后台活动
+        with self._lock:
+            for gid in self._grab_list:
+                if self._grab_list[gid]['status'] not in ('成功', '已取消'):
+                    self._grab_list[gid]['status'] = 'Cookies已过期'
 
     def _run_loop(self):
         while self._running:

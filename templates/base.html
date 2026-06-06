@@ -259,11 +259,13 @@ document.head.appendChild(styleEl);
 
 // Sidebar status
 function updateSidebarStatus() {
-    fetch('/api/monitor/status')
+    fetch('/api/health')
         .then(r => r.json())
         .then(data => {
             const el = document.getElementById('sidebar-status');
-            if (data.running) {
+            if (!data.cookies_valid) {
+                el.innerHTML = '<span class="status-dot" style="background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.4);"></span><span style="color:#ef4444">Cookies已过期</span>';
+            } else if (data.monitor_running) {
                 el.innerHTML = '<span class="status-dot running"></span><span style="color:#22c55e">监控运行中</span>';
             } else {
                 el.innerHTML = '<span class="status-dot stopped"></span><span style="color:#ef4444">监控已停止</span>';

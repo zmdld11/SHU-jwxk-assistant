@@ -129,6 +129,10 @@ function dropCourse(jxbId, kchId) {
 function loadAutoGrabs() {
     apiFetch('/api/grab/auto/list').then(function(data) {
         var div = document.getElementById('autoGrabList');
+        if (data && !data.cookies_valid) {
+            div.innerHTML = '<div class=\"alert alert-danger py-2\" style=\"font-size:13px;\"><i class=\"fas fa-exclamation-triangle\"></i> <strong>Cookies 已过期！</strong><br>所有自动抢课已暂停，请更新 Cookies 后重启系统。</div>';
+            return;
+        }
         if (!data || !data.grabs || Object.keys(data.grabs).length === 0) {
             div.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>暂无任务</p></div>'; return;
         }
