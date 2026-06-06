@@ -1,6 +1,7 @@
 """
 安全配置管理
 从 .env 文件加载敏感配置，避免硬编码在代码中
+支持从教务系统页面自动获取动态参数
 """
 import os
 from pathlib import Path
@@ -22,17 +23,18 @@ class Config:
         # 教务系统
         self.base_url = os.getenv('BASE_URL', 'https://jwxt.shu.edu.cn/jwglxt')
 
-
         # 监控参数
         self.class_capacity = int(os.getenv('CLASS_CAPACITY', '30'))
         self.check_interval = int(os.getenv('CHECK_INTERVAL', '30'))
 
-        # 学期参数（当前学年学期，如果查不到课程可以改这个）
-        self.xkxnm = os.getenv('XKXNM', '2026')   # 学年 如 2026 = 2026-2027学年
-        self.xkxqm = os.getenv('XKXQM', '3')      # 学期码（系统更新后改为3）
+        # 学期参数（从 .env 读取，但会被 auto_detect 覆盖）
+        self.xkxnm = os.getenv('XKXNM', '')
+        self.xkxqm = os.getenv('XKXQM', '')
 
-        # 用户上下文参数
-        self.xh_id = os.getenv('XH_ID', 'B1')
+        # 用户上下文参数（关键！从 .env 读取默认值，但会被 auto_detect 覆盖为实际值）
+        # xh_id: 学号（如 24122785），不是校区号！
+        self.xh_id = os.getenv('XH_ID', '')
+        self.xqh_id = os.getenv('XQH_ID', '')  # 校区号（如 B1）
         self.jg_id = os.getenv('JG_ID', '01080000')
         self.zyh_id = os.getenv('ZYH_ID', '20130809010052')
         self.zyfx_id = os.getenv('ZYFX_ID', 'wfx')
@@ -44,7 +46,15 @@ class Config:
         self.xz = os.getenv('XZ', '4')
         self.ccdm = os.getenv('CCDM', '3')
         self.xsbj = os.getenv('XSBJ', '16')
-        self.xkkz_id = os.getenv('XKKZ_ID', '458F6379768B4061E063F1000A0AC4CD')
+        self.xkkz_id = os.getenv('XKKZ_ID', '')
+
+        # 从页面动态获取的额外参数
+        self.xm = ''           # 姓名
+        self.xklc = '2'        # 选课轮次
+        self.xklcmc = ''       # 选课轮次名称
+        self.kklxdm = '01'     # 课程类型代码
+        self.xkxnmc = ''       # 学年名称（如 2025-2026）
+        self.xkxqmc = ''       # 学期名称（如 夏）
 
     @property
     def cookies(self) -> dict:
@@ -72,4 +82,48 @@ class Config:
             'has_route': bool(self.cookie_route),
             'xkxnm': self.xkxnm,
             'xkxqm': self.xkxqm,
+            'xkxnmc': self.xkxnmc,
+            'xkxqmc': self.xkxqmc,
+            'xklc': self.xklc,
+            'xklcmc': self.xklcmc,
         }
+
+    def update_from_page(self, page_params: dict):
+        """从教务系统页面隐藏字段更新配置（以页面值为准，总是覆盖）"""
+        mappings = {
+            'xkxnm': 'xkxnm',
+            'xkxqm': 'xkxqm',
+            'xh_id': 'xh_id',
+            'xqh_id': 'xqh_id',
+            'jg_id_1': 'jg_id',
+            'zyh_id': 'zyh_id',
+            'zyfx_id': 'zyfx_id',
+            'njdm_id': 'njdm_id',
+            'bh_id': 'bh_id',
+            'xbm': 'xbm',
+            'xslbdm': 'xslbdm',
+            'mzm': 'mzm',
+            'xz': 'xz',
+            'ccdm': 'ccdm',
+            'xsbj': 'xsbj',
+            'xkkz_id': 'xkkz_id',
+            'firstXkkzId': 'xkkz_id',
+            'xklc': 'xklc',
+            'xklcmc': 'xklcmc',
+            'kklxdm': 'kklxdm',
+            'xkxnmc': 'xkxnmc',
+            'xkxqmc': 'xkxqmc',
+            'xkkssj': 'xkkssj',
+            'xkjssj': 'xkjssj',
+            'xm': 'xm',
+        }
+        updated = []
+        for page_key, attr_name in mappings.items():
+            if page_key in page_params and page_params[page_key]:
+                old_val = getattr(self, attr_name, '')
+                new_val = page_params[page_key]
+                # 总是更新，以页面值为准
+                if old_val != new_val:
+                    updated.append(f'{attr_name}: {old_val} -> {new_val}')
+                setattr(self, attr_name, new_val)
+        return updated

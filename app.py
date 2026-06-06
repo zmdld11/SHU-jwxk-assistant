@@ -87,58 +87,66 @@ def load_schedule_cache() -> bool:
 
 
 def auto_detect_params():
-    """从教务系统页面自动提取 xkkz_id 等参数"""
+    """从教务系统页面自动提取所有参数（包括学期、用户上下文、选课控制ID等）"""
     global config, monitor
     updated = []
     try:
         url = f'{config.base_url}/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default'
         resp = monitor.session.get(url, timeout=10)
         if resp.status_code != 200:
-            logger.warning('自动检测参数: 页面获取失败')
+            logger.warning(f'自动检测参数: 页面获取失败 HTTP {resp.status_code}')
             return updated
         html = resp.text
 
-        # 提取 xkkz_id（页面隐藏字段）
-        m = re.search(r'name=\"firstXkkzId\"[^>]*value=\"([A-Fa-f0-9]{30,35})\"', html)
-        if m:
-            new_xkkz = m.group(1).upper()
-            if new_xkkz != config.xkkz_id:
-                logger.info(f'自动检测到新 xkkz_id: {new_xkkz[:8]}... (旧: {config.xkkz_id[:8]}...)')
-                lines = env_path.read_text('utf-8').splitlines()
-                found = False
-                for i, line in enumerate(lines):
-                    if line.strip().startswith('XKKZ_ID='):
-                        lines[i] = f'XKKZ_ID={new_xkkz}'
-                        found = True
-                        break
-                if not found:
-                    lines.append(f'XKKZ_ID={new_xkkz}')
-                env_path.write_text('\n'.join(lines) + '\n', 'utf-8')
-                config = Config()
-                updated.append('xkkz_id')
+        # 提取所有隐藏字段参数
+        page_params = {}
+        for m in re.finditer(r'name=\"([^\"]+)\"[^>]*value=\"([^\"]*)\"', html):
+            key, val = m.group(1), m.group(2)
+            if key not in page_params:
+                page_params[key] = val
 
-        # 提取学期参数（页面隐藏字段）
-        xnm_m = re.search(r'name=\"xkxnm\"[^>]*value=\"(\d{4})\"', html)
-        xqm_m = re.search(r'name=\"xkxqm\"[^>]*value=\"(\d+)\"', html)
-        if xnm_m and xqm_m:
-            new_xnm = xnm_m.group(1)
-            new_xqm = xqm_m.group(1)
-            if new_xnm != config.xkxnm or new_xqm != config.xkxqm:
-                logger.info(f'自动检测到新学期: {new_xnm}/{new_xqm} (旧: {config.xkxnm}/{config.xkxqm})')
-                lines = env_path.read_text('utf-8').splitlines() if not updated else env_path.read_text('utf-8').splitlines()
-                for pair, env_key in [((new_xnm, 'XKXNM'), (new_xqm, 'XKXQM'))]:
-                    val, key = pair
-                    found = False
-                    for i, line in enumerate(lines):
-                        if line.strip().startswith(f'{key}='):
-                            lines[i] = f'{key}={val}'
-                            found = True
-                            break
-                    if not found:
-                        lines.append(f'{key}={val}')
-                env_path.write_text('\n'.join(lines) + '\n', 'utf-8')
-                config = Config()
-                updated.append('semester')
+        if not page_params:
+            logger.warning('自动检测参数: 未从页面提取到任何参数')
+            return updated
+
+        # 使用 Config 的 update_from_page 方法更新
+        config_updates = config.update_from_page(page_params)
+        if config_updates:
+            for msg in config_updates:
+                logger.info(f'参数更新: {msg}')
+            updated.extend(config_updates)
+
+        # 同时将关键参数持久化到 .env
+        env_keys = {
+            'XKXNM': config.xkxnm,
+            'XKXQM': config.xkxqm,
+            'XH_ID': config.xh_id,
+            'XQH_ID': config.xqh_id,
+            'JG_ID': config.jg_id,
+            'ZYH_ID': config.zyh_id,
+            'ZYFX_ID': config.zyfx_id,
+            'NJDM_ID': config.njdm_id,
+            'BH_ID': config.bh_id,
+            'XBM': config.xbm,
+            'XSLBDM': config.xslbdm,
+            'MZM': config.mzm,
+            'XZ': config.xz,
+            'CCDM': config.ccdm,
+            'XSBJ': config.xsbj,
+            'XKKZ_ID': config.xkkz_id,
+        }
+
+        if env_path.exists():
+            content = env_path.read_text('utf-8')
+            for key, val in env_keys.items():
+                if val:
+                    pattern = rf'^{key}=.*$'
+                    replacement = f'{key}={val}'
+                    if re.search(pattern, content, re.MULTILINE):
+                        content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+                    else:
+                        content += f'\n{key}={val}'
+            env_path.write_text(content, 'utf-8')
 
     except Exception as e:
         logger.warning(f'自动检测参数异常: {e}')
@@ -679,12 +687,31 @@ def api_grab_auto_list():
     })
 
 
+def verify_cookies() -> tuple[bool, str]:
+    """实际验证 Cookie 是否有效（访问选课页面测试）"""
+    try:
+        url = f'{config.base_url}/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default'
+        resp = monitor.session.get(url, timeout=10)
+        if resp.status_code == 901:
+            return False, '会话已过期 (HTTP 901)'
+        if resp.status_code == 200:
+            # 检查页面内容是否包含登录页特征
+            if '登录' in resp.text or 'login' in resp.text.lower():
+                return False, '页面跳转到了登录页'
+            return True, '正常'
+        return False, f'HTTP {resp.status_code}'
+    except Exception as e:
+        return False, f'网络错误: {str(e)}'
+
+
 # ==================== 配置 API ====================
 
 @app.route('/api/health')
 def api_health():
+    cookies_ok, cookie_msg = verify_cookies()
     return jsonify({
-        'cookies_valid': not monitor.cookies_invalid,
+        'cookies_valid': cookies_ok,
+        'cookie_msg': cookie_msg,
         'schedule_loaded': len(_schedule_cache) > 0,
         'monitor_running': monitor.is_running,
     })
@@ -692,7 +719,55 @@ def api_health():
 
 @app.route('/api/config')
 def api_config():
-    return jsonify(config.to_dict())
+    result = config.to_dict()
+    # 添加选课时间信息（如果已获取）
+    result['xkkssj'] = getattr(config, 'xkkssj', '')  # 选课开始时间
+    result['xkjssj'] = getattr(config, 'xkjssj', '')  # 选课结束时间
+    return jsonify(result)
+
+
+@app.route('/api/refresh', methods=['POST'])
+def api_refresh():
+    """一键刷新参数：重新从页面获取所有配置并刷新课表"""
+    global config, monitor
+    try:
+        # 1. 验证 Cookie
+        cookies_ok, cookie_msg = verify_cookies()
+        if not cookies_ok:
+            return jsonify({'success': False, 'message': f'Cookie 无效: {cookie_msg}'})
+
+        # 2. 重新检测参数
+        updated = auto_detect_params()
+
+        # 3. 刷新课表
+        schedule_ok = load_schedule_cache()
+
+        # 4. 获取选课时间（如果页面有）
+        try:
+            url = f'{config.base_url}/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default'
+            resp = monitor.session.get(url, timeout=10)
+            if resp.status_code == 200:
+                html = resp.text
+                # 提取选课时间
+                kssj_m = re.search(r'name="xkkssj"[^>]*value="([^"]*)"', html)
+                jssj_m = re.search(r'name="xkjssj"[^>]*value="([^"]*)"', html)
+                if kssj_m:
+                    config.xkkssj = kssj_m.group(1)
+                if jssj_m:
+                    config.xkjssj = jssj_m.group(1)
+        except Exception as e:
+            logger.warning(f'刷新时获取选课时间失败: {e}')
+
+        return jsonify({
+            'success': True,
+            'message': f'参数刷新完成，更新 {len(updated)} 项',
+            'updated': updated,
+            'schedule_loaded': schedule_ok,
+            'semester': f'{config.xkxnmc or config.xkxnm} {config.xkxqmc or config.xkxqm}',
+        })
+    except Exception as e:
+        logger.error(f'刷新参数异常: {e}')
+        return jsonify({'success': False, 'message': f'刷新失败: {str(e)}'})
 
 
 @app.route('/api/config/validate')

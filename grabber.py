@@ -90,7 +90,20 @@ class CourseGrabber:
             'jcxx_id': '',
         }
         try:
-            resp = self.session.post(url, data=payload, timeout=15)
+            import requests
+            sess = requests.Session()
+            domain = self.config.base_url.split('://')[1].split('/')[0]
+            sess.cookies.set('JSESSIONID', self.config.cookie_jsessionid, domain=domain)
+            sess.cookies.set('route', self.config.cookie_route, domain=domain)
+            sess.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': f'{self.config.base_url}/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default',
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Origin': self.config.base_url.rsplit('/jwglxt', 1)[0],
+            })
+            resp = sess.post(url, data=payload, timeout=15)
             if resp.status_code == 200:
                 task.result_msg = '选课请求已发送'
                 return True
