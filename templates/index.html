@@ -52,8 +52,14 @@
 
     <!-- Config Status -->
     <div class="section-card" id="configCard">
-        <h5><i class="fas fa-shield-alt me-2 text-success"></i>连接状态</h5>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0"><i class="fas fa-shield-alt me-2 text-success"></i>连接状态</h5>
+            <button class="btn btn-outline-primary btn-sm" onclick="refreshParams()" id="btnRefresh">
+                <i class="fas fa-sync-alt me-1"></i>刷新参数
+            </button>
+        </div>
         <div id="configStatus"><p class="text-muted-small"><i class="fas fa-spinner fa-spin"></i> 加载中...</p></div>
+        <div id="countdownArea" class="mt-3" style="display:none;"></div>
     </div>
 
     <!-- Monitored Courses -->
@@ -151,24 +157,101 @@ function loadDashboard() {
 }
 
 function loadConfig() {
-    apiFetch('/api/config').then(data => {
-        if (!data) return;
+    // 同时获取 config 和 health
+    Promise.all([
+        apiFetch('/api/config'),
+        apiFetch('/api/health')
+    ]).then(([configData, healthData]) => {
+        if (!configData) return;
         const el = document.getElementById('configStatus');
-        const icon = data.has_jsessionid && data.has_route ? 'fa-check-circle text-success' : 'fa-times-circle text-danger';
-        const semester = `学年 ${data.xkxnm || '?'} / 学期 ${data.xkxqm || '?'}`;
+        const health = healthData || {};
+
+        // Cookie 状态
+        const cookiesRealOk = health.cookies_valid;
+        const cookieIcon = cookiesRealOk ? 'fa-check-circle text-success' : 'fa-times-circle text-danger';
+        const cookieText = cookiesRealOk
+            ? `Cookie 有效 ${health.cookie_msg ? '(' + health.cookie_msg + ')' : ''}`
+            : `Cookie 无效: ${health.cookie_msg || '请更新 Cookies'}`;
+        const cookieColor = cookiesRealOk ? '#22c55e' : '#ef4444';
+
+        // 学期显示
+        const semesterName = configData.xkxqmc || '';
+        const semesterCode = configData.xkxqm || '?';
+        const semesterLabel = semesterName
+            ? `${configData.xkxnmc || configData.xkxnm || '?'}学年 ${semesterName}学期`
+            : `学年 ${configData.xkxnm || '?'} / 学期代码 ${semesterCode}`;
+
         const html = `
             <div class="row g-3">
-                <div class="col-md-4"><small class="text-muted d-block">检查间隔</small><span class="fw-medium">${data.check_interval} 秒</span></div>
-                <div class="col-md-4"><small class="text-muted d-block">当前学期</small><span class="fw-medium">${semester}</span></div>
-                <div class="col-md-4"><small class="text-muted d-block">教务系统</small><span class="fw-medium"><a href="${data.base_url}" target="_blank" class="text-decoration-none">jwxt.shu.edu.cn</a></span></div>
-                <div class="col-12"><small class="text-muted d-block">Cookies</small><span class="fw-medium"><i class="fas ${icon} me-1"></i>${data.has_jsessionid ? 'JSESSIONID ✓' : 'JSESSIONID ✗'} | ${data.has_route ? 'Route ✓' : 'Route ✗'}</span></div>
+                <div class="col-md-3"><small class="text-muted d-block">检查间隔</small><span class="fw-medium">${configData.check_interval} 秒</span></div>
+                <div class="col-md-3"><small class="text-muted d-block">当前学期</small><span class="fw-medium">${semesterLabel}</span></div>
+                <div class="col-md-3"><small class="text-muted d-block">教务系统</small><span class="fw-medium"><a href="${configData.base_url}" target="_blank" class="text-decoration-none">jwxt.shu.edu.cn</a></span></div>
+                <div class="col-md-3"><small class="text-muted d-block">Cookie状态</small><span class="fw-medium" style="color:${cookieColor}"><i class="fas ${cookieIcon} me-1"></i>${cookieText}</span></div>
             </div>`;
         el.innerHTML = html;
+
+        // 选课倒计时
+        updateCountdown(configData.xkkssj, configData.xkjssj);
+    });
+}
+
+function updateCountdown(startTime, endTime) {
+    const area = document.getElementById('countdownArea');
+    if (!startTime) { area.style.display = 'none'; return; }
+
+    area.style.display = 'block';
+    const start = new Date(startTime.replace(/-/g, '/'));
+    const end = endTime ? new Date(endTime.replace(/-/g, '/')) : null;
+    const now = new Date();
+
+    let html = '';
+    if (now < start) {
+        const diff = start - now;
+        const hours = Math.floor(diff / 3600000);
+        const mins = Math.floor((diff % 3600000) / 60000);
+        const secs = Math.floor((diff % 60000) / 1000);
+        html = `
+            <div class="alert alert-info border-0 shadow-sm" style="background:#eff6ff;border-left:4px solid #3b82f6 !important;">
+                <i class="fas fa-clock me-2"></i><strong>选课倒计时</strong>
+                <span class="ms-3 font-monospace" style="font-size:18px;">${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}</span>
+                <small class="text-muted ms-2">开始时间: ${startTime}</small>
+            </div>`;
+    } else if (end && now > end) {
+        html = `<div class="alert alert-secondary border-0"><i class="fas fa-info-circle me-2"></i>选课已结束 (${endTime})</div>`;
+    } else {
+        const diff = end ? end - now : 0;
+        const hours = Math.floor(diff / 3600000);
+        const mins = Math.floor((diff % 3600000) / 60000);
+        html = `
+            <div class="alert alert-success border-0 shadow-sm" style="background:#f0fdf4;border-left:4px solid #22c55e !important;">
+                <i class="fas fa-play-circle me-2"></i><strong>选课进行中！</strong>
+                ${end ? `<span class="ms-3">剩余时间: ${hours}小时${mins}分</span>` : ''}
+                <small class="text-muted ms-2">(${startTime} ~ ${endTime || '未知'})</small>
+            </div>`;
+    }
+    area.innerHTML = html;
+}
+
+function refreshParams() {
+    const btn = document.getElementById('btnRefresh');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>刷新中...';
+    apiFetch('/api/refresh', { method: 'POST' }).then(data => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt me-1"></i>刷新参数';
+        if (data && data.success) {
+            showToast(data.message + (data.semester ? ' → ' + data.semester : ''), 'success');
+            loadConfig();
+            loadDashboard();
+        } else {
+            showToast((data && data.message) || '刷新失败', 'danger');
+        }
     });
 }
 
 loadDashboard();
 loadConfig();
 setInterval(loadDashboard, 5000);
+setInterval(loadConfig, 10000);  // 每10秒刷新一次状态（含倒计时）
 </script>
 {% endblock %}

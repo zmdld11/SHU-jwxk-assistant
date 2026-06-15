@@ -71,8 +71,8 @@ class MonitorService:
             'bklx_id': '0',
             'sfkkjyxdxnxq': '0',
             'kzkcgs': '0',
-            'xqh_id': self.config.xh_id,
-            'jg_id': self.config.jg_id,
+            'xqh_id': self.config.xqh_id or 'B1',
+            'jg_id': self.config.jg_id or '01080000',
             'zyh_id': self.config.zyh_id,
             'zyfx_id': self.config.zyfx_id,
             'txbsfrl': '1',
@@ -117,13 +117,22 @@ class MonitorService:
     def _normalize_items(self, items: list[dict], identifier: str) -> list[dict]:
         """统一处理 API 返回的课程数据"""
         for item in items:
-            item.setdefault('yxzrs', '0')
-            item.setdefault('jxbrl', str(self.config.class_capacity))
             jsxx = item.get('jsxx', '')
             parts = jsxx.split('/')
             teacher_name = parts[1] if len(parts) >= 3 else (parts[-1] if parts else '')
-            enrolled = int(item.get('yxzrs', 0))
-            cap = int(item.get('zrs', 0)) or int(item.get('jxbrl', self.config.class_capacity))
+
+            # 安全解析数字字段（正方系统可能返回空字符串）
+            def safe_int(val, default=0):
+                try:
+                    return int(val) if val is not None and str(val).strip() != '' else default
+                except (ValueError, TypeError):
+                    return default
+
+            enrolled = safe_int(item.get('yxzrs'), 0)
+            cap = safe_int(item.get('zrs'), 0) or safe_int(item.get('jxbrl'), self.config.class_capacity)
+
+            item.setdefault('yxzrs', str(enrolled))
+            item.setdefault('jxbrl', str(cap))
             item['jxbmc'] = item.get('jxbmc') or identifier
             item['skjs'] = item.get('skjs') or teacher_name
             item['zrs'] = str(cap)
@@ -141,40 +150,43 @@ class MonitorService:
         return self._search(keyword=keyword)
 
     def _search(self, kch_id: str = '', keyword: str = '') -> tuple[list[dict], str | None]:
-        """通用课程搜索"""
-        semesters = [('2025', '32'), ('2025', '16'), ('2026', '3')]
+        """通用课程搜索 - 使用当前配置的正确学期参数"""
         url = f'{self.config.base_url}/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html?gnmkdm=N253512'
 
-        seen_sem = set()
-        for xnm, xqm in semesters:
-            key = f'{xnm}_{xqm}'
-            if key in seen_sem: continue
-            seen_sem.add(key)
-            payload = self._build_payload(kch_id or keyword)
-            payload['xkxnm'] = xnm
-            payload['xkxqm'] = xqm
-            # 模糊搜索：filter_list 放关键词，kch_id 放课程号
-            if keyword and not kch_id:
-                payload['kch_id'] = ''
-                payload['filter_list[0]'] = keyword
-            try:
-                resp = self.session.post(url, data=payload, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    self._normalize_items(data, kch_id or keyword)
-                    logger.info(f'搜索成功: 学年={xnm}, 学期={xqm}, 返回 {len(data)} 条')
-                    return data, None
-                if resp.status_code == 901:
-                    logger.warning('HTTP 901 = 会话已过期，请更新 Cookies')
-                    self.mark_cookies_invalid()
-                    break
-            except requests.exceptions.RequestException as e:
-                logger.error(f'网络请求失败 (xnm={xnm}, xqm={xqm}): {e}')
-                continue
-            except Exception as e:
-                logger.error(f'解析数据失败 (xnm={xnm}, xqm={xqm}): {e}')
-                continue
-        return [], '无法获取课程数据。Cookies 可能已过期'
+        xnm = self.config.xkxnm
+        xqm = self.config.xkxqm
+
+        if not xnm or not xqm:
+            return [], '学期参数未配置，请确保 .env 中有 XKXNM 和 XKXQM 或运行自动检测'
+
+        payload = self._build_payload(kch_id or keyword)
+        payload['xkxnm'] = xnm
+        payload['xkxqm'] = xqm
+
+        # 模糊搜索：filter_list 放关键词，kch_id 放课程号
+        if keyword and not kch_id:
+            payload['kch_id'] = ''
+            payload['filter_list[0]'] = keyword
+
+        try:
+            resp = self.session.post(url, data=payload, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                self._normalize_items(data, kch_id or keyword)
+                logger.info(f'搜索成功: 学年={xnm}, 学期={xqm}, 返回 {len(data)} 条')
+                return data, None
+            if resp.status_code == 901:
+                logger.warning('HTTP 901 = 会话已过期，请更新 Cookies')
+                self.mark_cookies_invalid()
+                return [], '会话已过期 (HTTP 901)，请更新 Cookies'
+        except requests.exceptions.RequestException as e:
+            logger.error(f'网络请求失败 (xnm={xnm}, xqm={xqm}): {e}')
+            return [], f'网络错误: {e}'
+        except Exception as e:
+            logger.error(f'解析数据失败 (xnm={xnm}, xqm={xqm}): {e}')
+            return [], f'数据解析错误: {e}'
+
+        return [], '无法获取课程数据'
 
     # ---- 监控列表管理 ----
 
